@@ -3,35 +3,133 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vox Analyzer - Wasm Test</title>
+    <title>Vox Analyzer - Projeto Vaccai</title>
     <style>
-        body { font-family: monospace; background: #222; color: #0f0; padding: 20px; line-height: 1.6; }
+        /* Estilos Globais Estilo Terminal */
+        body { 
+            font-family: 'Courier New', monospace; 
+            background: #1a1a1a; 
+            color: #0f0; 
+            padding: 20px; 
+            line-height: 1.6;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 { color: #fff; margin-bottom: 10px; }
         #status { color: yellow; font-weight: bold; }
-        .data-box { border: 1px solid #444; padding: 20px; margin-top: 20px; font-size: 1.5em; background: #111; }
-        .controls { margin: 20px 0; }
-        button { padding: 10px 20px; font-size: 1em; cursor: pointer; font-family: inherit; border: none; border-radius: 4px; }
+        
+        /* Container de Controles */
+        .controls { 
+            margin: 20px 0; 
+            display: flex; 
+            gap: 15px; 
+        }
+        
+        button { 
+            padding: 12px 24px; 
+            font-size: 1em; 
+            cursor: pointer; 
+            font-family: inherit; 
+            border: none; 
+            border-radius: 4px; 
+            font-weight: bold;
+            transition: transform 0.1s, background 0.3s;
+        }
+
+        button:active { transform: scale(0.95); }
+
         #startBtn { background-color: #0f0; color: #000; }
         #startBtn:disabled { background-color: #444; color: #888; cursor: not-allowed; }
-        #stopBtn { background-color: #500; color: #fff; margin-left: 10px; }
+
+        #stopBtn { background-color: #500; color: #fff; }
+        #stopBtn:disabled { background-color: #311; color: #666; cursor: not-allowed; }
+
+        /* Container do Gráfico para evitar que fique 'gigante' */
+        .graph-container {
+            width: 100%;
+            max-width: 900px;
+            background: #000;
+            border: 2px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        #pitchGraph { 
+            width: 100%; 
+            height: 300px; /* Altura fixa controlada pelo CSS */
+            display: block;
+        }
+
+        /* Box de Dados e Nota Musical */
+        .data-box { 
+            border: 1px solid #444; 
+            padding: 20px; 
+            background: #111;
+            display: flex; 
+            gap: 30px; 
+            align-items: center;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 900px;
+            box-sizing: border-box;
+        }
+
+        .note-display {
+            font-size: 3em; 
+            font-weight: bold; 
+            color: #fff; 
+            background: #222; 
+            padding: 20px; 
+            border-radius: 12px; 
+            min-width: 120px; 
+            text-align: center;
+            border: 2px solid #0f0;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
+        }
+
+        .metrics { 
+            font-size: 1.1em; 
+            color: #aaa; 
+            flex-grow: 1;
+        }
+
+        .metrics div { margin-bottom: 5px; }
+        .metrics span { color: #0f0; font-weight: bold; }
+
     </style>
 </head>
 <body>
-    <h1>Vox Analyzer (C++ Core)</h1>
+
+    <h1>Projeto Vaccai</h1>
     <p>Status: <span id="status">Carregando Wasm...</span></p>
     
     <div class="controls">
         <button id="startBtn" disabled>Iniciar Microfone</button>
         <button id="stopBtn" disabled>Parar</button>
     </div>
+    
+    <div class="graph-container">
+        <canvas id="pitchGraph"></canvas>
+    </div>
 
     <div class="data-box">
-        <div>Frequência: <span id="freq">0.00</span> Hz</div>
-        <div>Nota MIDI:  <span id="midi">0.00</span></div>
-        <div>Pitch Error: <span id="error">0.0</span> cents</div>
+        <div class="note-display">
+            <span id="noteName">--</span>
+        </div>
+        
+        <div class="metrics">
+            <div>Frequência: <span id="freq">0.0</span> Hz</div>
+            <div>Nota MIDI:  <span id="midi">0.0</span></div>
+            <div>Pitch Error: <span id="error">0.0</span> cents</div>
+        </div>
     </div>
 
     <script src="../build/vox_engine.js"></script>
-    
     <script type="module" src="main.js"></script>
+
 </body>
 </html>
