@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "Emscripten",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "C:\\Users\\Rumenick\\emsdk\\upstream\\emscripten\\cache\\sysroot\\include"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            // Usando barras duplas para garantir compatibilidade no Windows
+            "compilerPath": "C:\\Users\\Rumenick\\emsdk\\upstream\\emscripten\\em++.bat",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-gcc-x64"
+            // Removido o configurationProvider para usar os caminhos acima
+        }
+    ],
+    "version": 4
+}

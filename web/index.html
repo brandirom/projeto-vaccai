@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Vox Analyzer - Wasm Test</title>
+    <style>
+        body { font-family: monospace; background: #222; color: #0f0; padding: 20px; }
+        #status { color: yellow; }
+        .data-box { border: 1px solid #444; padding: 20px; margin-top: 20px; font-size: 1.5em; }
+        button { padding: 10px 20px; font-size: 1.2em; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Vox Analyzer (C++ Core)</h1>
+    <p>Status: <span id="status">Carregando Wasm...</span></p>
+    
+    <button id="startBtn" disabled>Iniciar Microfone</button>
+
+    <div class="data-box">
+        <div>Freq: <span id="freq">0.0</span> Hz</div>
+        <div>Nota MIDI: <span id="midi">0.0</span></div>
+        <div>Erro: <span id="error">0.0</span> cents</div>
+    </div>
+
+    <!-- Importa o script gerado pelo Emscripten -->
+    <script src="../build/vox_engine.js"></script>
+    <!-- Importa nosso script principal -->
+    <script type="module" src="main.js"></script>
+</body>
+</html>
