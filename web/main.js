@@ -21,17 +21,11 @@ const elError = document.getElementById('error');
 const elAudioSource = document.getElementById('audioSource');
 const btnStart = document.getElementById('startBtn');
 const btnStop = document.getElementById('stopBtn');
-
-<<<<<<< HEAD
 const elScaleDisplay = document.createElement('div');
 elScaleDisplay.style = "position: absolute; top: 10px; right: 20px; color: cyan; font-size: 1.5em; font-weight: bold;";
 elScaleDisplay.innerText = "Detectando Tom...";
 document.body.appendChild(elScaleDisplay);
 
-
-// Nomes das notas para conversão
-=======
->>>>>>> 288c467c4be036d1501a0fe0115a1ea851d3593f
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 // ==========================================
@@ -88,27 +82,15 @@ function isBlackKey(midiValue) {
 class GraphRenderer {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
-        if (!this.canvas) return;
         this.ctx = this.canvas.getContext('2d');
         this.width = this.canvas.width;
         this.height = this.canvas.height;
         
-<<<<<<< HEAD
         this.minMidi = 40; 
         this.maxMidi = 76; 
         this.semitoneHeight = this.height / (this.maxMidi - this.minMidi);
 
         this.historySize = 300; 
-=======
-        this.width = this.canvas.offsetWidth;
-        this.height = this.canvas.offsetHeight;
-        this.canvas.width = this.width;
-        this.canvas.height = this.height;
-
-        this.minMidi = 24; 
-        this.maxMidi = 108; 
-        this.historySize = 600; 
->>>>>>> 288c467c4be036d1501a0fe0115a1ea851d3593f
         this.history = new Array(this.historySize).fill(null);
         
         // Estado da Escala
@@ -134,24 +116,13 @@ class GraphRenderer {
     }
 
     pushData(midiNote) {
-<<<<<<< HEAD
         // ... (Lógica de suavização igual) ...
         // Simplifiquei aqui para caber na resposta, use o código anterior de suavização
         this.history.push(midiNote > 0 ? midiNote : null);
-=======
-        if (midiNote > 0) {
-            if (midiNote < this.minMidi) this.minMidi = Math.floor(midiNote) - 2;
-            if (midiNote > this.maxMidi) this.maxMidi = Math.ceil(midiNote) + 2;
-            this.history.push(midiNote);
-        } else {
-            this.history.push(null);
-        }
->>>>>>> 288c467c4be036d1501a0fe0115a1ea851d3593f
         if (this.history.length > this.historySize) this.history.shift();
     }
 
     mapMidiToY(note) {
-<<<<<<< HEAD
         return this.height - ((note - this.minMidi) * this.semitoneHeight);
     }
     
@@ -167,18 +138,12 @@ class GraphRenderer {
         
         const scaleProfile = this.detectedMode === 0 ? majorScale : minorScale;
         return scaleProfile[interval] === 1;
-=======
-        const range = this.maxMidi - this.minMidi;
-        const normalized = (note - this.minMidi) / range;
-        return this.height - (normalized * this.height);
->>>>>>> 288c467c4be036d1501a0fe0115a1ea851d3593f
     }
 
     draw() {
-        if (!this.ctx) return;
+        if (!this.canvas) return;
         this.ctx.clearRect(0, 0, this.width, this.height);
 
-<<<<<<< HEAD
         // 1. DESENHAR O FUNDO INTELIGENTE
         for (let i = this.minMidi; i <= this.maxMidi; i++) {
             const y = this.mapMidiToY(i);
@@ -214,48 +179,6 @@ class GraphRenderer {
                 this.ctx.font = "10px monospace";
                 this.ctx.fillText(getNoteString(i), 5, y - 2);
             }
-=======
-        // Grid
-        for (let i = this.minMidi; i <= this.maxMidi; i++) {
-            const y = this.mapMidiToY(i);
-            this.ctx.fillStyle = isBlackKey(i) ? "#181818" : "#222";
-            this.ctx.fillRect(0, y - semitoneHeight, this.width, semitoneHeight);
-
-            if (i % 12 === 0) {
-                this.ctx.strokeStyle = "#444";
-                this.ctx.beginPath();
-                this.ctx.moveTo(0, y);
-                this.ctx.lineTo(this.width, y);
-                this.ctx.stroke();
-                this.ctx.fillStyle = "#aaa";
-                this.ctx.font = "bold 11px Arial";
-                this.ctx.fillText(getNoteString(i), 5, y - 5);
-            }
-        }
-
-        // Linha de Pitch
-        this.ctx.lineWidth = 2.5;
-        this.ctx.strokeStyle = "#00ffcc";
-        this.ctx.shadowBlur = 4;
-        this.ctx.shadowColor = "#00ffcc";
-        this.ctx.beginPath();
-
-        const stepX = this.width / this.historySize;
-        let started = false;
-
-        for (let i = 0; i < this.history.length; i++) {
-            const note = this.history[i];
-            const x = i * stepX;
-            if (note === null) {
-                this.ctx.stroke();
-                this.ctx.beginPath();
-                started = false;
-                continue;
-            }
-            const y = this.mapMidiToY(note);
-            if (!started) { this.ctx.moveTo(x, y); started = true; }
-            else { this.ctx.lineTo(x, y); }
->>>>>>> 288c467c4be036d1501a0fe0115a1ea851d3593f
         }
 
         // 2. DESENHAR A LINHA DA VOZ
@@ -295,6 +218,7 @@ class GraphRenderer {
             this.ctx.stroke();
         }
         this.ctx.shadowBlur = 0;
+
         requestAnimationFrame(() => this.draw());
     }
 }
@@ -440,8 +364,6 @@ function updateUI(result) {
         else if (err < 40) elError.style.color = "#ff0";
         else elError.style.color = "#f00";
 
-<<<<<<< HEAD
-        // Manda pro gráfico
         if (graph) {
         graph.setKey(result.detected_key, result.detected_mode);
         
@@ -450,12 +372,6 @@ function updateUI(result) {
         } else {
              graph.pushData(0);
         }
-=======
-        if (graph) graph.pushData(result.midi_note);
-    } else {
-        if (graph) graph.pushData(0); // Silêncio no gráfico
-        elNoteName.innerText = "--";
->>>>>>> 288c467c4be036d1501a0fe0115a1ea851d3593f
     }
 }
 }
