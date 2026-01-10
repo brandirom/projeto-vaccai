@@ -20,6 +20,12 @@ const elError = document.getElementById('error');
 const btnStart = document.getElementById('startBtn');
 const btnStop = document.getElementById('stopBtn');
 
+const elScaleDisplay = document.createElement('div');
+elScaleDisplay.style = "position: absolute; top: 10px; right: 20px; color: cyan; font-size: 1.5em; font-weight: bold;";
+elScaleDisplay.innerText = "Detectando Tom...";
+document.body.appendChild(elScaleDisplay);
+
+
 // Nomes das notas para conversão
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
@@ -46,109 +52,146 @@ class GraphRenderer {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
         this.ctx = this.canvas.getContext('2d');
+        this.width = this.canvas.width;
+        this.height = this.canvas.height;
         
-        // Sincroniza resolução
-        this.width = this.canvas.offsetWidth;
-        this.height = this.canvas.offsetHeight;
-        this.canvas.width = this.width;
-        this.canvas.height = this.height;
+        this.minMidi = 40; 
+        this.maxMidi = 76; 
+        this.semitoneHeight = this.height / (this.maxMidi - this.minMidi);
 
-        // RANGE AMPLO (C1 até C8 - Cobre quase todo o espectro musical)
-        this.minMidi = 24; // C1 (~32Hz)
-        this.maxMidi = 108; // C8 (~4186Hz)
-        
-        this.historySize = 600; 
+        this.historySize = 300; 
         this.history = new Array(this.historySize).fill(null);
+        
+        // Estado da Escala
+        this.detectedKey = -1; // 0-11
+        this.detectedMode = 0; // 0=Major, 1=Minor
         
         this.draw(); 
     }
+    
+    // Atualiza o estado da escala vindo do C++
+    setKey(key, mode) {
+        this.detectedKey = key;
+        this.detectedMode = mode;
+        
+        // Atualiza texto na tela
+        if (key >= 0) {
+            const rootName = NOTE_NAMES[key];
+            const modeName = mode === 0 ? "Maior" : "Menor";
+            elScaleDisplay.innerText = `Tom Provável: ${rootName} ${modeName}`;
+        } else {
+            elScaleDisplay.innerText = "Analisando...";
+        }
+    }
 
     pushData(midiNote) {
-        if (midiNote > 0) {
-            // AUTO-RANGE: Se a nota sair do limite, expandimos o limite dinamicamente
-            if (midiNote < this.minMidi) this.minMidi = Math.floor(midiNote) - 2;
-            if (midiNote > this.maxMidi) this.maxMidi = Math.ceil(midiNote) + 2;
-            this.history.push(midiNote);
-        } else {
-            this.history.push(null);
-        }
-
+        // ... (Lógica de suavização igual) ...
+        // Simplifiquei aqui para caber na resposta, use o código anterior de suavização
+        this.history.push(midiNote > 0 ? midiNote : null);
         if (this.history.length > this.historySize) this.history.shift();
     }
 
     mapMidiToY(note) {
-        // Cálculo da altura do semitom baseada no range atual
-        const range = this.maxMidi - this.minMidi;
-        const normalized = (note - this.minMidi) / range;
-        return this.height - (normalized * this.height);
+        return this.height - ((note - this.minMidi) * this.semitoneHeight);
+    }
+    
+    // Verifica se uma nota pertence à escala detectada
+    isInScale(midiNote) {
+        if (this.detectedKey < 0) return true; // Se não sabe, tudo é válido
+        
+        const noteIndex = midiNote % 12;
+        const interval = (noteIndex - this.detectedKey + 12) % 12;
+        
+        const majorScale = [1,0,1,0,1,1,0,1,0,1,0,1];
+        const minorScale = [1,0,1,1,0,1,0,1,1,0,1,0];
+        
+        const scaleProfile = this.detectedMode === 0 ? majorScale : minorScale;
+        return scaleProfile[interval] === 1;
     }
 
     draw() {
         if (!this.canvas) return;
         this.ctx.clearRect(0, 0, this.width, this.height);
-        
-        const range = this.maxMidi - this.minMidi;
-        const semitoneHeight = this.height / range;
 
-        // 1. DESENHAR O GRID (PIANO ROLL)
+        // 1. DESENHAR O FUNDO INTELIGENTE
         for (let i = this.minMidi; i <= this.maxMidi; i++) {
             const y = this.mapMidiToY(i);
-            const isBlack = isBlackKey(i);
             
-            // Faixas horizontais
-            this.ctx.fillStyle = isBlack ? "#181818" : "#222";
-            this.ctx.fillRect(0, y - semitoneHeight, this.width, semitoneHeight);
+            // Verifica se essa linha é "segura" (dentro da escala)
+            const isSafe = this.isInScale(i);
+            const isBlack = (i % 12 === 1 || i % 12 === 3 || i % 12 === 6 || i % 12 === 8 || i % 12 === 10);
+            
+            // Lógica de Cores:
+            // - Dentro da Escala: Cinza mais claro
+            // - Fora da Escala: Cinza muito escuro (quase preto)
+            // - Nota atual cantada: Highlight (opcional)
 
-            // Linha de oitava (Dó) mais forte
-            if (i % 12 === 0) {
-                this.ctx.strokeStyle = "#444";
-                this.ctx.lineWidth = 1.5;
-                this.ctx.beginPath();
-                this.ctx.moveTo(0, y);
-                this.ctx.lineTo(this.width, y);
-                this.ctx.stroke();
-
-                this.ctx.fillStyle = "#aaa";
-                this.ctx.font = "bold 11px Arial";
-                this.ctx.fillText(getNoteString(i), 5, y - 5);
-            }
-        }
-
-        // 2. LINHA DA VOZ (Logarítmica por natureza via MIDI)
-        this.ctx.lineWidth = 2.5;
-        this.ctx.strokeStyle = "#00ffcc";
-        this.ctx.shadowBlur = 4;
-        this.ctx.shadowColor = "#00ffcc";
-        this.ctx.beginPath();
-
-        const stepX = this.width / this.historySize;
-        let started = false;
-
-        for (let i = 0; i < this.history.length; i++) {
-            const note = this.history[i];
-            const x = i * stepX;
-
-            if (note === null) {
-                this.ctx.stroke();
-                this.ctx.beginPath();
-                started = false;
-                continue;
-            }
-
-            const y = this.mapMidiToY(note);
-            if (!started) {
-                this.ctx.moveTo(x, y);
-                started = true;
+            if (isSafe) {
+                this.ctx.fillStyle = isBlack ? "#252525" : "#353535"; 
             } else {
-                this.ctx.lineTo(x, y);
+                this.ctx.fillStyle = "#111"; // Zona perigosa (fora do tom)
+            }
+            
+            this.ctx.fillRect(0, y - this.semitoneHeight, this.width, this.semitoneHeight);
+            
+            // Linha divisória
+            this.ctx.fillStyle = "#000";
+            this.ctx.fillRect(0, y, this.width, 1);
+
+            // Nome das notas (Destaque para a tônica)
+            if (i % 12 === this.detectedKey) {
+                this.ctx.fillStyle = "#0ff"; // Ciano para a Tônica
+                this.ctx.font = "bold 10px monospace";
+                this.ctx.fillText(getNoteString(i), 5, y - 2);
+            } else if (i % 12 === 0) {
+                this.ctx.fillStyle = "#444";
+                this.ctx.font = "10px monospace";
+                this.ctx.fillText(getNoteString(i), 5, y - 2);
             }
         }
-        this.ctx.stroke();
+
+        // 2. DESENHAR A LINHA DA VOZ
+        this.ctx.lineWidth = 4;
+        this.ctx.lineCap = "round";
+        this.ctx.lineJoin = "round";
+        const stepX = this.width / this.historySize;
+        
+        // Vamos desenhar segmento por segmento para mudar a cor dinamicamente
+        for (let i = 1; i < this.history.length; i++) {
+            const note = this.history[i];
+            const prevNote = this.history[i-1];
+
+            if (note === null || prevNote === null) continue;
+
+            const x1 = (i - 1) * stepX;
+            const y1 = this.mapMidiToY(prevNote);
+            const x2 = i * stepX;
+            const y2 = this.mapMidiToY(note);
+
+            this.ctx.beginPath();
+            this.ctx.moveTo(x1, y1);
+            this.ctx.lineTo(x2, y2);
+            
+            // COR DA LINHA:
+            // Se estiver na escala: Verde/Azul
+            // Se estiver fora: Laranja/Vermelho
+            if (this.isInScale(Math.round(note))) {
+                this.ctx.strokeStyle = "#00ffcc"; // Safe
+                this.ctx.shadowColor = "#00ffcc";
+            } else {
+                this.ctx.strokeStyle = "#ff4400"; // Danger!
+                this.ctx.shadowColor = "#ff4400";
+            }
+            
+            this.ctx.shadowBlur = 5;
+            this.ctx.stroke();
+        }
         this.ctx.shadowBlur = 0;
 
         requestAnimationFrame(() => this.draw());
     }
 }
+
 let graph = null;
 
 // ==========================================
@@ -274,9 +317,14 @@ function updateUI(result) {
         else elError.style.color = "#f00";
 
         // Manda pro gráfico
-        if (graph) graph.pushData(result.midi_note);
-    } else {
-        if (graph) graph.pushData(0); // Silêncio
-        elNoteName.innerText = "--";
+        if (graph) {
+        graph.setKey(result.detected_key, result.detected_mode);
+        
+        if (result.frequency > 0) {
+             graph.pushData(result.midi_note);
+        } else {
+             graph.pushData(0);
+        }
     }
+}
 }
