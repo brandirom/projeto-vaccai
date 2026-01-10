@@ -2,29 +2,36 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vox Analyzer - Wasm Test</title>
     <style>
-        body { font-family: monospace; background: #222; color: #0f0; padding: 20px; }
-        #status { color: yellow; }
-        .data-box { border: 1px solid #444; padding: 20px; margin-top: 20px; font-size: 1.5em; }
-        button { padding: 10px 20px; font-size: 1.2em; cursor: pointer; }
+        body { font-family: monospace; background: #222; color: #0f0; padding: 20px; line-height: 1.6; }
+        #status { color: yellow; font-weight: bold; }
+        .data-box { border: 1px solid #444; padding: 20px; margin-top: 20px; font-size: 1.5em; background: #111; }
+        .controls { margin: 20px 0; }
+        button { padding: 10px 20px; font-size: 1em; cursor: pointer; font-family: inherit; border: none; border-radius: 4px; }
+        #startBtn { background-color: #0f0; color: #000; }
+        #startBtn:disabled { background-color: #444; color: #888; cursor: not-allowed; }
+        #stopBtn { background-color: #500; color: #fff; margin-left: 10px; }
     </style>
 </head>
 <body>
     <h1>Vox Analyzer (C++ Core)</h1>
     <p>Status: <span id="status">Carregando Wasm...</span></p>
     
-    <button id="startBtn" disabled>Iniciar Microfone</button>
-
-    <div class="data-box">
-        <div>Freq: <span id="freq">0.0</span> Hz</div>
-        <div>Nota MIDI: <span id="midi">0.0</span></div>
-        <div>Erro: <span id="error">0.0</span> cents</div>
+    <div class="controls">
+        <button id="startBtn" disabled>Iniciar Microfone</button>
+        <button id="stopBtn" disabled>Parar</button>
     </div>
 
-    <!-- Importa o script gerado pelo Emscripten -->
+    <div class="data-box">
+        <div>Frequência: <span id="freq">0.00</span> Hz</div>
+        <div>Nota MIDI:  <span id="midi">0.00</span></div>
+        <div>Pitch Error: <span id="error">0.0</span> cents</div>
+    </div>
+
     <script src="../build/vox_engine.js"></script>
-    <!-- Importa nosso script principal -->
+    
     <script type="module" src="main.js"></script>
 </body>
 </html>

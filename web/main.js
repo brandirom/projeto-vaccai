@@ -1,8 +1,16 @@
-// Variáveis Globais
+// ==========================================
+// VARIÁVEIS GLOBAIS
+// ==========================================
 let audioContext = null;
 let dspEngine = null;
 let wasmModule = null;
-let inputBufferPtr = null; // Ponteiro para a memória do C++
+let inputBufferPtr = null;
+
+// Variáveis de fluxo de áudio (precisam ser globais para o Stop funcionar)
+let mediaStream = null;
+let source = null;
+let processor = null;
+
 const BUFFER_SIZE = 2048;
 
 // Elementos da UI
@@ -11,80 +19,139 @@ const elFreq = document.getElementById('freq');
 const elMidi = document.getElementById('midi');
 const elError = document.getElementById('error');
 const btnStart = document.getElementById('startBtn');
+const btnStop = document.getElementById('stopBtn');
 
-// 1. Inicializar o Módulo Wasm
+// ==========================================
+// 1. INICIALIZAÇÃO DO WASM
+// ==========================================
 VoxEngine().then(module => {
     wasmModule = module;
-    elStatus.innerText = "Wasm Carregado! Pronto para iniciar.";
+    elStatus.innerText = "Sistema pronto.";
     btnStart.disabled = false;
-    console.log("Módulo Wasm carregado com sucesso.");
+    console.log("Módulo Wasm carregado.");
 });
 
-// 2. Função para iniciar o áudio
+// ==========================================
+// 2. CONTROLE DE ÁUDIO (START)
+// ==========================================
 btnStart.addEventListener('click', async () => {
     try {
-        elStatus.innerText = "Solicitando microfone...";
-        
-        // Inicializa AudioContext
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
-        
-        // Captura Microfone
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        const source = audioContext.createMediaStreamSource(stream);
+        // Previne múltiplos cliques
+        btnStart.disabled = true;
+        elStatus.innerText = "Iniciando...";
 
-        // Instancia a classe C++
-        dspEngine = new wasmModule.DSPEngine(audioContext.sampleRate, BUFFER_SIZE);
-        
-        // ALOCAÇÃO DE MEMÓRIA:
-        // Precisamos criar um espaço na memória do C++ para receber o áudio do JS.
-        // float tem 4 bytes.
-        const byteSize = BUFFER_SIZE * 4; 
-        inputBufferPtr = wasmModule._malloc(byteSize);
+        // Cria ou resume o AudioContext (necessário por políticas de navegador)
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+        } else if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
 
-        elStatus.innerText = "Processando Áudio em Tempo Real...";
-        setupAudioProcessing(source);
+        // Instancia a Engine C++ (se ainda não existir)
+        if (!dspEngine) {
+            dspEngine = new wasmModule.DSPEngine(audioContext.sampleRate, BUFFER_SIZE);
+            const byteSize = BUFFER_SIZE * 4; // float = 4 bytes
+            inputBufferPtr = wasmModule._malloc(byteSize);
+        }
+
+        // Captura o Microfone
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        source = audioContext.createMediaStreamSource(mediaStream);
+
+        // Cria o Processador (ScriptProcessor por enquanto)
+        processor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
+
+        // Conecta: Mic -> Processador -> Destino (Caixa de som - cuidado com feedback!)
+        // Nota: Conectar ao destination é necessário para o script rodar, 
+        // mas se der eco, desconectaremos o output depois.
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+        // Define o loop de processamento
+        processor.onaudioprocess = processAudioBlock;
+
+        // Atualiza UI
+        elStatus.innerText = "Capturando...";
+        btnStop.disabled = false;
+        elStatus.style.color = "#0f0";
 
     } catch (err) {
         console.error(err);
         elStatus.innerText = "Erro: " + err.message;
+        btnStart.disabled = false;
     }
 });
 
-function setupAudioProcessing(source) {
-    // Para teste rápido, usamos ScriptProcessor (depois mudaremos para AudioWorklet para performance máxima)
-    const processor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
-    
-    source.connect(processor);
-    processor.connect(audioContext.destination);
+// ==========================================
+// 3. CONTROLE DE ÁUDIO (STOP)
+// ==========================================
+btnStop.addEventListener('click', async () => {
+    // 1. Primeiro: Para o processamento de áudio para evitar erros de 'undefined'
+    if (processor) {
+        processor.onaudioprocess = null; // Anula a função antes de desconectar
+        processor.disconnect();
+        processor = null;
+    }
 
-    processor.onaudioprocess = (e) => {
-        if (!dspEngine || !inputBufferPtr) return;
+    // 2. Segundo: Desconecta a fonte do microfone
+    if (source) {
+        source.disconnect();
+        source = null;
+    }
 
-        // 1. Pegar os dados brutos do microfone (Float32Array)
-        const inputData = e.inputBuffer.getChannelData(0);
+    // 3. Terceiro: Desliga a luz do microfone no navegador
+    if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+    }
 
-        // 2. Copiar dados do JS para a memória do Wasm (HEAPF32)
-        // inputBufferPtr >> 2 divide por 4 bytes para achar o índice no array de floats
-        wasmModule.HEAPF32.set(inputData, inputBufferPtr >> 2);
+    // 4. Quarto: Coloca o AudioContext para dormir (ECONOMIA DE CPU)
+    if (audioContext && audioContext.state !== 'closed') {
+        await audioContext.suspend(); 
+    }
 
-        // 3. Chamar a função C++ Process
-        // Passamos o PONTEIRO (endereço de memória), não o array
-        const result = dspEngine.process(inputBufferPtr);
+    // 5. Reseta a UI
+    resetUI();
+});
 
-        // 4. Atualizar UI
-        updateUI(result);
-    };
+function resetUI() {
+    btnStart.disabled = false;
+    btnStop.disabled = true;
+    elStatus.innerText = "Monitoramento encerrado.";
+    elStatus.style.color = "yellow";
+    elFreq.innerText = "0.0";
+    elMidi.innerText = "0.0";
+    elError.innerText = "0.0";
+    elError.style.color = "";
+}
+
+// ==========================================
+// 4. LOOP DE PROCESSAMENTO
+// ==========================================
+function processAudioBlock(e) {
+    // Se o stop foi clicado, processor será null e saímos imediatamente
+    if (!processor || !dspEngine || !inputBufferPtr || !wasmModule.HEAPF32) return;
+
+    const inputData = e.inputBuffer.getChannelData(0);
+    wasmModule.HEAPF32.set(inputData, inputBufferPtr >> 2);
+
+    const result = dspEngine.process(inputBufferPtr);
+    updateUI(result);
 }
 
 function updateUI(result) {
-    // result é o objeto AnalysisResult definido no C++
     if (result.frequency > 0) {
-        elFreq.innerText = result.frequency.toFixed(2);
-        elMidi.innerText = result.midi_note.toFixed(2);
-        elError.innerText = result.pitch_error.toFixed(1);
+        elFreq.innerText = result.frequency.toFixed(1);
+        elMidi.innerText = result.midi_note.toFixed(1);
+        elError.innerText = result.pitch_error.toFixed(0);
         
-        // Feedback visual simples de cor
-        if (Math.abs(result.pitch_error) < 15) elError.style.color = "#0f0"; // Verde
-        else elError.style.color = "#f00"; // Vermelho
+        // Feedback Visual Simples
+        if (Math.abs(result.pitch_error) < 15) {
+            elError.style.color = "#0f0"; // Verde = Afinado
+        } else if (Math.abs(result.pitch_error) < 40) {
+            elError.style.color = "#ff0"; // Amarelo = Quase
+        } else {
+            elError.style.color = "#f00"; // Vermelho = Desafinado
+        }
     }
 }
