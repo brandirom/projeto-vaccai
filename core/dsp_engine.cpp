@@ -2,20 +2,16 @@
 #include "pitch_detection.hpp"
 #include <cmath>
 #include <vector>
-#include <algorithm> // Para std::min/max
+#include <numeric>
+#include <algorithm> // Para std::sort
 #include <emscripten/bind.h>
 
 using namespace emscripten;
 
 DSPEngine::DSPEngine(int sr, int bs) : sample_rate(sr), buffer_size(bs) {
-    // Inicialização do Estado
-    smoothed_frequency = 0.0f;
-    
-    // FATOR ALPHA (Afinado manualmente)
-    // 0.1 = Muito lento (robótico)
-    // 0.9 = Muito rápido (instável)
-    // 0.3 a 0.5 = O "Sweet Spot" para voz humana
-    smoothing_factor = 0.4f; 
+    // Inicializa o buffer da mediana com 5 zeros
+    median_buffer.resize(5, 0.0f);
+    median_idx = 0;
 }
 
 DSPEngine::~DSPEngine() {}
@@ -33,9 +29,27 @@ float DSPEngine::compute_rms(const float* buffer, int size) {
     return std::sqrt(sum / size);
 }
 
+// Lógica do Filtro de Mediana
+float DSPEngine::apply_median_filter(float new_freq) {
+    // 1. Adiciona novo valor no buffer circular
+    median_buffer[median_idx] = new_freq;
+    median_idx = (median_idx + 1) % median_buffer.size();
+
+    // 2. Cria uma cópia para ordenar (não podemos ordenar o buffer original senão perdemos a ordem temporal)
+    std::vector<float> sorted = median_buffer;
+    std::sort(sorted.begin(), sorted.end());
+
+    // 3. Retorna o valor do meio
+    // Se tiver spikes (0 ou 1000), eles vão para as pontas e são ignorados
+    return sorted[2]; // Índice 2 é o meio de 5 (0,1,2,3,4)
+}
+
 AnalysisResult DSPEngine::process(uintptr_t input_buffer_ptr) {
     float* audio_buffer = reinterpret_cast<float*>(input_buffer_ptr);
     AnalysisResult res;
+    
+    // Inicializa chroma
+    res.chroma.resize(12, 0.0f);
 
     // 1. Pré-processamento
     remove_dc_offset(audio_buffer, buffer_size);
@@ -44,79 +58,40 @@ AnalysisResult DSPEngine::process(uintptr_t input_buffer_ptr) {
     // Threshold de silêncio
     const float NOISE_THRESHOLD = 0.005f;
 
+    float raw_frequency = 0.0f;
+
     if (res.rms_amplitude > NOISE_THRESHOLD) {
-        
-        // 2. Detecção Bruta (Raw)
-        float current_raw = PitchAlgo::find_fundamental(audio_buffer, buffer_size, sample_rate);
-        res.raw_frequency = current_raw;
-
-        // Filtro de sanidade (50Hz - 1400Hz)
-        if (current_raw > 50.0f && current_raw < 1400.0f) {
-            
-            // 3. LÓGICA EWMA (STATEFUL)
-            if (smoothed_frequency == 0.0f) {
-                // Se vinhamos de silêncio, não suaviza a entrada (Snap to note)
-                // Isso evita o efeito "slide" no ataque da nota
-                smoothed_frequency = current_raw;
-            } else {
-                // Aplica o filtro: Novo = Alpha * Bruto + (1-Alpha) * Antigo
-                // Verificação de Pulo Grande: Se a nota mudar mais de 50Hz num frame (mudança de oitava abrupta),
-                // resetamos o filtro para responder rápido.
-                if (std::abs(current_raw - smoothed_frequency) > 50.0f) {
-                     smoothed_frequency = current_raw;
-                } else {
-                     smoothed_frequency = (smoothing_factor * current_raw) + 
-                                          ((1.0f - smoothing_factor) * smoothed_frequency);
-                }
-            }
-
-            res.frequency = smoothed_frequency;
-
-            // 4. CÁLCULO DE ESTABILIDADE RELATIVA
-            // Compara o desvio entre o Bruto e o Suavizado
-            // Se o bruto está variando muito em torno da média, stability cai.
-            float deviation = std::abs(res.raw_frequency - res.frequency);
-            
-            // Normaliza a estabilidade (Se desvio > 5Hz, estabilidade tende a zero)
-            float stability_metric = 1.0f - (deviation / 5.0f);
-            res.stability = std::max(0.0f, std::min(1.0f, stability_metric));
-
-            // 5. Cálculos Finais de Nota
-            res.midi_note = PitchAlgo::hz_to_midi(res.frequency);
-            float note_nearest = std::round(res.midi_note);
-            res.pitch_error = (res.midi_note - note_nearest) * 100.0f;
-
-        } else {
-            // Frequência inválida detectada
-            // Não zeramos smoothed_frequency imediatamente aqui para tolerar micro-falhas de detecção
-            // mas marcamos o resultado como inválido
-            res.frequency = 0;
-            res.midi_note = 0;
-            res.pitch_error = 0;
-            res.stability = 0;
-        }
-
-    } else {
-        // SILÊNCIO ABSOLUTO (RESET DE ESTADO)
-        // Isso garante que a próxima frase comece "limpa"
-        smoothed_frequency = 0.0f;
-        
-        res.frequency = 0;
-        res.raw_frequency = 0;
-        res.midi_note = 0;
-        res.pitch_error = 0;
-        res.stability = 0;
+        raw_frequency = PitchAlgo::find_fundamental(audio_buffer, buffer_size, sample_rate);
     }
 
-    res.chroma.resize(12, 0.0f);
+    // 2. APLICA O FILTRO DE MEDIANA (A Mágica acontece aqui)
+    // Passamos o raw_frequency (que pode ser 0 ou um spike) pelo filtro
+    float filtered_frequency = apply_median_filter(raw_frequency);
+
+    // Só consideramos válido se o filtro mediano disser que é válido
+    // Isso evita que um único frame de barulho "acenda" o gráfico
+    if (filtered_frequency > 55.0f && filtered_frequency < 1400.0f) {
+        res.frequency = filtered_frequency;
+        res.midi_note = PitchAlgo::hz_to_midi(res.frequency);
+        
+        float note_nearest = std::round(res.midi_note);
+        res.pitch_error = (res.midi_note - note_nearest) * 100.0f;
+    } else {
+        res.frequency = 0;
+        res.midi_note = 0;
+        res.pitch_error = 0;
+    }
+
+    res.stability = 0.0f; // Stub
+
     return res;
 }
 
+// Bindings (Mantém igual)
 EMSCRIPTEN_BINDINGS(vox_engine) {
     register_vector<float>("FloatVector");
     value_object<AnalysisResult>("AnalysisResult")
         .field("frequency", &AnalysisResult::frequency)
-        .field("raw_frequency", &AnalysisResult::raw_frequency) // Novo campo
         .field("midi_note", &AnalysisResult::midi_note)
         .field("pitch_error", &AnalysisResult::pitch_error)
         .field("stability", &AnalysisResult::stability)
