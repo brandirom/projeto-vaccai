@@ -174,7 +174,7 @@ btnStart.addEventListener('click', async () => {
         }
         const constraints = {
             audio: {
-                echoCancellation: false,
+                echoCancellation: true,
                 autoGainControl: false,
                 noiseSuppression: false,
                 latency: 0
