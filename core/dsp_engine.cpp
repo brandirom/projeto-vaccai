@@ -7,53 +7,65 @@
 using namespace emscripten;
 
 DSPEngine::DSPEngine(int sr, int bs) : sample_rate(sr), buffer_size(bs) {
-    // Inicializa o vetor chroma com 12 zeros
-    // Isso evita lixo de memória
+    // Inicializa vetor chroma
 }
 
 DSPEngine::~DSPEngine() {}
 
-AnalysisResult DSPEngine::process(uintptr_t input_buffer_ptr) {
-    // Converte o endereço de memória (int) de volta para ponteiro float
-    // reinterpret_cast é a forma C++ de dizer "eu sei que esse int é um ponteiro"
-    const float* audio_buffer = reinterpret_cast<const float*>(input_buffer_ptr);
+// Função auxiliar para calcular volume (RMS)
+float compute_rms(const float* buffer, int size) {
+    float sum = 0.0f;
+    for (int i = 0; i < size; i++) {
+        sum += buffer[i] * buffer[i];
+    }
+    return std::sqrt(sum / size);
+}
 
+AnalysisResult DSPEngine::process(uintptr_t input_buffer_ptr) {
+    const float* audio_buffer = reinterpret_cast<const float*>(input_buffer_ptr);
     AnalysisResult res;
     
-    // Inicializa vetor chroma
-    res.chroma.resize(12, 0.0f);
+    // 1. CALCULAR VOLUME (RMS)
+    res.rms_amplitude = compute_rms(audio_buffer, buffer_size);
 
-    // 1. Detectar Frequência
-    res.frequency = PitchAlgo::find_fundamental(audio_buffer, buffer_size, sample_rate);
-    
-    // 2. Converter para Nota MIDI
-    res.midi_note = PitchAlgo::hz_to_midi(res.frequency);
-    
-    // 3. Calcular Erro (Cents)
-    if (res.frequency > 0) {
-        float note_nearest = std::round(res.midi_note);
-        res.pitch_error = (res.midi_note - note_nearest) * 100.0f;
+    // 2. NOISE GATE (O FILTRO MÁGICO)
+    // Se o volume for menor que 0.02 (2%), consideramos silêncio/ruído.
+    // Isso evita que o gráfico fique pulando com o ar condicionado.
+    const float NOISE_THRESHOLD = 0.02f;
+
+    if (res.rms_amplitude > NOISE_THRESHOLD) {
+        
+        // Só calcula Pitch se tiver som alto o suficiente
+        res.frequency = PitchAlgo::find_fundamental(audio_buffer, buffer_size, sample_rate);
+        
+        // Filtro extra: Se a frequência for absurda (ex: > 1200Hz ou < 60Hz), ignora
+        if (res.frequency > 60.0f && res.frequency < 1200.0f) {
+            res.midi_note = PitchAlgo::hz_to_midi(res.frequency);
+            float note_nearest = std::round(res.midi_note);
+            res.pitch_error = (res.midi_note - note_nearest) * 100.0f;
+        } else {
+            // Frequência inválida
+            res.frequency = 0;
+            res.midi_note = 0;
+            res.pitch_error = 0;
+        }
+
     } else {
-        res.pitch_error = 0.0f;
-        res.midi_note = 0.0f;
+        // Silêncio
+        res.frequency = 0;
+        res.midi_note = 0;
+        res.pitch_error = 0;
     }
 
-    // Stub para amplitude (implementaremos RMS real depois)
-    res.rms_amplitude = 0.5f; 
-    res.stability = 0.9f;
+    res.chroma.resize(12, 0.0f); // Stub
+    res.stability = 0.9f; // Stub
 
     return res;
 }
 
-// ==========================================
-// EXPORTAÇÃO PARA JAVASCRIPT (WebAssembly)
-// ==========================================
-
+// BINDINGS (Mantém igual)
 EMSCRIPTEN_BINDINGS(vox_engine) {
-    // 1. Precisamos ensinar ao JS o que é um vector<float>
     register_vector<float>("FloatVector");
-
-    // 2. Ensinar o que é o AnalysisResult
     value_object<AnalysisResult>("AnalysisResult")
         .field("frequency", &AnalysisResult::frequency)
         .field("midi_note", &AnalysisResult::midi_note)
@@ -62,7 +74,6 @@ EMSCRIPTEN_BINDINGS(vox_engine) {
         .field("rms_amplitude", &AnalysisResult::rms_amplitude)
         .field("chroma", &AnalysisResult::chroma);
 
-    // 3. Exportar a classe principal
     class_<DSPEngine>("DSPEngine")
         .constructor<int, int>()
         .function("process", &DSPEngine::process, allow_raw_pointers());
