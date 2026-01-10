@@ -172,8 +172,16 @@ btnStart.addEventListener('click', async () => {
             dspEngine = new wasmModule.DSPEngine(audioContext.sampleRate, BUFFER_SIZE);
             inputBufferPtr = wasmModule._malloc(BUFFER_SIZE * 4);
         }
+        const constraints = {
+            audio: {
+                echoCancellation: false,
+                autoGainControl: false,
+                noiseSuppression: false,
+                latency: 0
+            }
+        };
 
-        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
         source = audioContext.createMediaStreamSource(mediaStream);
         processor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
 
@@ -217,7 +225,7 @@ btnStop.addEventListener('click', async () => {
     if (audioContext && audioContext.state !== 'closed') {
         await audioContext.suspend();
     }
-    
+
     if (graph) {
         graph.minMidi = 24;
         graph.maxMidi = 108;
