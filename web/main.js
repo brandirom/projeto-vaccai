@@ -16,15 +16,22 @@ const BUFFER_SIZE = 2048;
 const elStatus = document.getElementById('status');
 const elNoteName = document.getElementById('noteName');
 const elFreq = document.getElementById('freq');
-const elMidi = document.getElementById('midi'); // Referência ao span MIDI
+const elMidi = document.getElementById('midi'); // Opcional, se existir no HTML
 const elError = document.getElementById('error');
 const elAudioSource = document.getElementById('audioSource');
 const btnStart = document.getElementById('startBtn');
 const btnStop = document.getElementById('stopBtn');
-const elScaleDisplay = document.createElement('div');
-elScaleDisplay.style = "position: absolute; top: 10px; right: 20px; color: cyan; font-size: 1.5em; font-weight: bold;";
-elScaleDisplay.innerText = "Detectando Tom...";
-document.body.appendChild(elScaleDisplay);
+const elVolumeBar = document.getElementById('volumeBar');
+
+// Cria o display de tom se não existir
+let elScaleDisplay = document.getElementById('scaleDisplay');
+if (!elScaleDisplay) {
+    elScaleDisplay = document.createElement('div');
+    elScaleDisplay.id = 'scaleDisplay';
+    elScaleDisplay.style = "position: absolute; top: 10px; right: 20px; color: cyan; font-size: 1.5em; font-weight: bold;";
+    elScaleDisplay.innerText = "Aguardando...";
+    document.body.appendChild(elScaleDisplay);
+}
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
@@ -47,6 +54,7 @@ async function getConnectedDevices() {
             elAudioSource.appendChild(option);
         });
 
+        // Tenta manter a seleção anterior
         if (currentValue && [...elAudioSource.options].some(opt => opt.value === currentValue)) {
             elAudioSource.value = currentValue;
         }
@@ -55,7 +63,7 @@ async function getConnectedDevices() {
     }
 }
 
-// Inicializa lista e monitora mudanças (ex: fone plugado)
+// Inicializa lista e monitora mudanças
 getConnectedDevices();
 navigator.mediaDevices.ondevicechange = getConnectedDevices;
 
@@ -70,11 +78,6 @@ function getNoteString(midiValue) {
     return NOTE_NAMES[noteIndex] + octave;
 }
 
-function isBlackKey(midiValue) {
-    const i = Math.round(midiValue) % 12;
-    return (i === 1 || i === 3 || i === 6 || i === 8 || i === 10);
-}
-
 // ==========================================
 // 3. RENDERIZAÇÃO GRÁFICA
 // ==========================================
@@ -82,142 +85,142 @@ function isBlackKey(midiValue) {
 class GraphRenderer {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
+        if (!this.canvas) return;
+
         this.ctx = this.canvas.getContext('2d');
         this.width = this.canvas.width;
         this.height = this.canvas.height;
-        
-        this.minMidi = 40; 
-        this.maxMidi = 76; 
+
+        // --- AJUSTE DO EIXO Y (Range Vocal Amplo: C2 a C6) ---
+        this.minMidi = 36; 
+        this.maxMidi = 84; 
         this.semitoneHeight = this.height / (this.maxMidi - this.minMidi);
 
-        this.historySize = 300; 
+        this.historySize = 400; // Aumentado para um scroll mais suave
         this.history = new Array(this.historySize).fill(null);
         
-        // Estado da Escala
-        this.detectedKey = -1; // 0-11
-        this.detectedMode = 0; // 0=Major, 1=Minor
+        this.detectedKey = -1;
+        this.detectedMode = 0;
         
         this.draw(); 
     }
     
-    // Atualiza o estado da escala vindo do C++
     setKey(key, mode) {
         this.detectedKey = key;
         this.detectedMode = mode;
         
-        // Atualiza texto na tela
         if (key >= 0) {
             const rootName = NOTE_NAMES[key];
             const modeName = mode === 0 ? "Maior" : "Menor";
-            elScaleDisplay.innerText = `Tom Provável: ${rootName} ${modeName}`;
+            elScaleDisplay.innerText = `Tom: ${rootName} ${modeName}`;
+            elScaleDisplay.style.color = "#00ffcc";
         } else {
-            elScaleDisplay.innerText = "Analisando...";
+            elScaleDisplay.innerText = "Analisando Tom...";
+            elScaleDisplay.style.color = "#666";
         }
     }
 
     pushData(midiNote) {
-        // ... (Lógica de suavização igual) ...
-        // Simplifiquei aqui para caber na resposta, use o código anterior de suavização
         this.history.push(midiNote > 0 ? midiNote : null);
         if (this.history.length > this.historySize) this.history.shift();
     }
 
     mapMidiToY(note) {
+        // Inverte o eixo para que notas altas fiquem no topo
         return this.height - ((note - this.minMidi) * this.semitoneHeight);
     }
     
-    // Verifica se uma nota pertence à escala detectada
     isInScale(midiNote) {
-        if (this.detectedKey < 0) return true; // Se não sabe, tudo é válido
-        
-        const noteIndex = midiNote % 12;
+        if (this.detectedKey < 0) return true;
+        const noteIndex = Math.round(midiNote) % 12;
         const interval = (noteIndex - this.detectedKey + 12) % 12;
-        
         const majorScale = [1,0,1,0,1,1,0,1,0,1,0,1];
         const minorScale = [1,0,1,1,0,1,0,1,1,0,1,0];
-        
         const scaleProfile = this.detectedMode === 0 ? majorScale : minorScale;
         return scaleProfile[interval] === 1;
     }
 
     draw() {
         if (!this.canvas) return;
-        this.ctx.clearRect(0, 0, this.width, this.height);
+        const ctx = this.ctx;
 
-        // 1. DESENHAR O FUNDO INTELIGENTE
+        // 1. FUNDO COM GRADIENTE
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, this.height);
+        bgGrad.addColorStop(0, "#0b0e14");
+        bgGrad.addColorStop(1, "#1a1f2c");
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, this.width, this.height);
+
+        // 2. GRID DE SEMITONS (Piano Roll Style)
         for (let i = this.minMidi; i <= this.maxMidi; i++) {
             const y = this.mapMidiToY(i);
+            const isBlackKey = [1, 3, 6, 8, 10].includes(i % 12);
+            const isRoot = (i % 12 === this.detectedKey);
             
-            // Verifica se essa linha é "segura" (dentro da escala)
-            const isSafe = this.isInScale(i);
-            const isBlack = (i % 12 === 1 || i % 12 === 3 || i % 12 === 6 || i % 12 === 8 || i % 12 === 10);
-            
-            // Lógica de Cores:
-            // - Dentro da Escala: Cinza mais claro
-            // - Fora da Escala: Cinza muito escuro (quase preto)
-            // - Nota atual cantada: Highlight (opcional)
+            // Faixas horizontais
+            ctx.fillStyle = isBlackKey ? "rgba(0, 0, 0, 0.2)" : "rgba(255, 255, 255, 0.02)";
+            ctx.fillRect(0, y - this.semitoneHeight, this.width, this.semitoneHeight);
 
-            if (isSafe) {
-                this.ctx.fillStyle = isBlack ? "#252525" : "#353535"; 
-            } else {
-                this.ctx.fillStyle = "#111"; // Zona perigosa (fora do tom)
-            }
-            
-            this.ctx.fillRect(0, y - this.semitoneHeight, this.width, this.semitoneHeight);
-            
-            // Linha divisória
-            this.ctx.fillStyle = "#000";
-            this.ctx.fillRect(0, y, this.width, 1);
+            // Linhas de grade sutis
+            ctx.beginPath();
+            ctx.strokeStyle = isRoot ? "rgba(0, 255, 204, 0.2)" : "rgba(255, 255, 255, 0.05)";
+            ctx.lineWidth = isRoot ? 2 : 1;
+            ctx.moveTo(0, y);
+            ctx.lineTo(this.width, y);
+            ctx.stroke();
 
-            // Nome das notas (Destaque para a tônica)
-            if (i % 12 === this.detectedKey) {
-                this.ctx.fillStyle = "#0ff"; // Ciano para a Tônica
-                this.ctx.font = "bold 10px monospace";
-                this.ctx.fillText(getNoteString(i), 5, y - 2);
-            } else if (i % 12 === 0) {
-                this.ctx.fillStyle = "#444";
-                this.ctx.font = "10px monospace";
-                this.ctx.fillText(getNoteString(i), 5, y - 2);
+            // Labels das Notas (apenas C e a nota tônica para não poluir)
+            if (i % 12 === 0 || isRoot) {
+                ctx.fillStyle = isRoot ? "#00ffcc" : "#555";
+                ctx.font = isRoot ? "bold 11px Inter, sans-serif" : "10px Inter, sans-serif";
+                ctx.fillText(getNoteString(i), 8, y - 4);
             }
         }
 
-        // 2. DESENHAR A LINHA DA VOZ
-        this.ctx.lineWidth = 4;
-        this.ctx.lineCap = "round";
-        this.ctx.lineJoin = "round";
-        const stepX = this.width / this.historySize;
+        // 3. DESENHAR A LINHA DE PITCH (O rastro da voz)
+        const stepX = this.width / (this.historySize - 1);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
         
-        // Vamos desenhar segmento por segmento para mudar a cor dinamicamente
         for (let i = 1; i < this.history.length; i++) {
             const note = this.history[i];
             const prevNote = this.history[i-1];
 
             if (note === null || prevNote === null) continue;
 
+            // Se a diferença for muito grande (salto de oitava ou quebra), não conecte com linha
+            if (Math.abs(note - prevNote) > 2) continue;
+
             const x1 = (i - 1) * stepX;
             const y1 = this.mapMidiToY(prevNote);
             const x2 = i * stepX;
             const y2 = this.mapMidiToY(note);
 
-            this.ctx.beginPath();
-            this.ctx.moveTo(x1, y1);
-            this.ctx.lineTo(x2, y2);
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
             
-            // COR DA LINHA:
-            // Se estiver na escala: Verde/Azul
-            // Se estiver fora: Laranja/Vermelho
-            if (this.isInScale(Math.round(note))) {
-                this.ctx.strokeStyle = "#00ffcc"; // Safe
-                this.ctx.shadowColor = "#00ffcc";
-            } else {
-                this.ctx.strokeStyle = "#ff4400"; // Danger!
-                this.ctx.shadowColor = "#ff4400";
+            const inScale = this.isInScale(note);
+            
+            // Efeito de brilho (Glow)
+            ctx.shadowBlur = inScale ? 12 : 4;
+            ctx.strokeStyle = inScale ? "#00ffcc" : "#ff4455";
+            ctx.shadowColor = ctx.strokeStyle;
+            ctx.lineWidth = 3;
+            
+            ctx.stroke();
+            
+            // Pequena partícula na ponta atual (opcional, apenas para o último ponto)
+            if (i === this.history.length - 1) {
+                ctx.beginPath();
+                ctx.arc(x2, y2, 4, 0, Math.PI * 2);
+                ctx.fillStyle = ctx.strokeStyle;
+                ctx.fill();
             }
-            
-            this.ctx.shadowBlur = 5;
-            this.ctx.stroke();
         }
-        this.ctx.shadowBlur = 0;
+        
+        // Reset do shadow para performance
+        ctx.shadowBlur = 0;
 
         requestAnimationFrame(() => this.draw());
     }
@@ -269,7 +272,7 @@ btnStart.addEventListener('click', async () => {
 
         mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
         
-        // Atualiza labels (nomes) dos microfones após permissão concedida
+        // Atualiza nomes após permissão
         getConnectedDevices().then(() => {
             if (selectedDeviceId) elAudioSource.value = selectedDeviceId;
         });
@@ -294,14 +297,11 @@ btnStart.addEventListener('click', async () => {
 });
 
 btnStop.addEventListener('click', async () => {
-    // 1. Para o processamento IMEDIATAMENTE
     if (processor) {
         processor.onaudioprocess = null; 
         processor.disconnect();
         processor = null;
     }
-
-    // 2. Desconecta fonte e para tracks (apaga a luz do microfone)
     if (source) {
         source.disconnect();
         source = null;
@@ -311,15 +311,7 @@ btnStop.addEventListener('click', async () => {
         mediaStream = null;
     }
 
-    // 3. Suspende áudio para economizar energia
-    if (audioContext && audioContext.state !== 'closed') {
-        await audioContext.suspend();
-    }
-
-    // 4. Limpa interface e Gráfico
     if (graph) {
-        graph.minMidi = 24;
-        graph.maxMidi = 108;
         graph.history.fill(null);
     }
 
@@ -333,6 +325,7 @@ btnStop.addEventListener('click', async () => {
     elFreq.innerText = "0.0";
     if (elMidi) elMidi.innerText = "0.0";
     elError.innerText = "0.0";
+    if (elVolumeBar) elVolumeBar.style.width = "0%";
 });
 
 // ==========================================
@@ -352,19 +345,32 @@ function processAudioBlock(e) {
 }
 
 function updateUI(result) {
+    // 1. Atualizar Barra de Volume (Sempre, mesmo em silêncio)
+    if (elVolumeBar) {
+        const volPercent = Math.min(100, result.rms_amplitude * 100 * 5); 
+        elVolumeBar.style.width = volPercent + "%";
+        // Vermelho se som baixo (silêncio), Lime se som detectado
+        elVolumeBar.style.backgroundColor = result.rms_amplitude < 0.005 ? "#500" : "#0f0";
+    }
+
+    // 2. Atualizar UI de Texto (Apenas se tiver nota)
     if (result.frequency > 0) {
         elNoteName.innerText = getNoteString(result.midi_note);
         elFreq.innerText = result.frequency.toFixed(1);
         elError.innerText = result.pitch_error.toFixed(0);
         if (elMidi) elMidi.innerText = result.midi_note.toFixed(1);
         
-        // Cor do erro (Cents)
         const err = Math.abs(result.pitch_error);
         if (err < 15) elError.style.color = "#0f0";
         else if (err < 40) elError.style.color = "#ff0";
         else elError.style.color = "#f00";
+    } else {
+        elNoteName.innerText = "--";
+    }
 
-        if (graph) {
+    // 3. Atualizar Gráfico e Escala (SEMPRE)
+    // O gráfico precisa receber 0 para desenhar as pausas
+    if (graph) {
         graph.setKey(result.detected_key, result.detected_mode);
         
         if (result.frequency > 0) {
@@ -373,5 +379,4 @@ function updateUI(result) {
              graph.pushData(0);
         }
     }
-}
 }
