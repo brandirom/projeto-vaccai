@@ -8,19 +8,54 @@
 
 using namespace emscripten;
 
+// ==================================================
+// MATRIZ DE TRANSIÇÃO (Círculo de Quintas)
+// ==================================================
+std::vector<std::vector<float>> build_transition_matrix() {
+    std::vector<std::vector<float>> trans(24, std::vector<float>(24, 0.0f));
+    for (int from = 0; from < 24; from++) {
+        for (int to = 0; to < 24; to++) {
+            int from_note = from % 12;
+            int to_note = to % 12;
+            bool from_is_minor = (from >= 12);
+            bool to_is_minor = (to >= 12);
+
+            int diff = std::abs(to_note - from_note);
+            int harmonic_dist = (diff * 7) % 12;
+            if (harmonic_dist < 0) harmonic_dist += 12;
+            harmonic_dist = std::min(harmonic_dist, 12 - harmonic_dist);
+
+            float prob = 0.001f; 
+
+            if (from_is_minor == to_is_minor) {
+                if (harmonic_dist == 0) prob = 0.80f;      
+                else if (harmonic_dist == 1) prob = 0.08f; 
+            } else {
+                // Relativas (ex: C Major <-> A Minor)
+                int semitone_diff = std::abs((from % 12) - (to % 12));
+                if (semitone_diff == 9 || semitone_diff == 3) prob = 0.10f;
+            }
+            trans[from][to] = prob;
+        }
+    }
+    return trans;
+}
+
+static std::vector<std::vector<float>> TRANSITION_MATRIX = build_transition_matrix();
+
+// ==================================================
+// IMPLEMENTAÇÃO DSPEngine
+// ==================================================
+
 DSPEngine::DSPEngine(int sr, int bs) : sample_rate(sr), buffer_size(bs) {
     median_buffer.resize(5, 0.0f);
     median_idx = 0;
     
-    // Inicializa acumulador com zeros
-    key_accumulator.resize(12, 0.0f);
+    // MUDANÇA: 24 estados com Probabilidade inicial uniforme
+    key_accumulator.resize(24, 1.0f / 24.0f); 
 }
 
 DSPEngine::~DSPEngine() {}
-
-// ... (Mantenha remove_dc_offset, compute_rms e apply_median_filter IGUAIS ao anterior) ...
-// ... Copie as funções do passo anterior aqui ...
-// Vou pular a cópia para economizar espaço, mas mantenha elas no arquivo!
 
 void DSPEngine::remove_dc_offset(float* buffer, int size) {
     float sum = 0.0f;
@@ -43,77 +78,73 @@ float DSPEngine::apply_median_filter(float new_freq) {
     return sorted[2];
 }
 
-// ==================================================
-// ALGORITMO DE DETECÇÃO DE ESCALA (KEY DETECTION)
-// ==================================================
+// ALGORITMO DE DETECÇÃO HMM (Forward Simplificado)
 void DSPEngine::update_key_detector(float midi_note, int& out_key, int& out_mode) {
-    // 1. Decaimento (Memória de curto prazo)
-    // Multiplicamos por 0.995 a cada frame. Notas antigas vão sumindo.
-    for(int i=0; i<12; i++) {
-        key_accumulator[i] *= 0.995f;
+    if (midi_note <= 0) return; 
+
+    // 1. PROBABILIDADE DE EMISSÃO
+    std::vector<float> emission(24, 0.0f);
+    int note_idx = (int)std::round(midi_note) % 12;
+
+    const int profile_major[12] = {1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1}; 
+    const int profile_minor[12] = {1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0}; 
+
+    for (int k = 0; k < 24; k++) {
+        int root = k % 12;
+        bool is_minor = k >= 12;
+        int interval = (note_idx - root + 12) % 12;
+        bool in_scale = is_minor ? profile_minor[interval] : profile_major[interval];
+        emission[k] = in_scale ? 1.0f : 0.05f; 
     }
 
-    // 2. Adiciona a nota atual
-    if (midi_note > 0) {
-        int note_idx = (int)round(midi_note) % 12;
-        // Adiciona energia. Usamos 1.0. Se quiser ser mais chique, pode usar a amplitude.
-        key_accumulator[note_idx] += 1.0f;
+    // 2. ATUALIZAÇÃO HMM
+    std::vector<float> next_probs(24, 0.0f);
+    
+    // Normalização para evitar drift numérico
+    float sum_prev = 0.0f;
+    for(float p : key_accumulator) sum_prev += p;
+    if(sum_prev > 0) {
+        for(int i=0; i<24; i++) key_accumulator[i] /= sum_prev;
+    } else {
+        for(int i=0; i<24; i++) key_accumulator[i] = 1.0f / 24.0f;
     }
 
-    // 3. Comparação com Templates (Major e Minor)
-    // Perfil Krumhansl-Schmuckler Simplificado (Binário para performance)
-    // 1 = Nota pertence à escala, 0 = Não pertence
-    const int profile_major[12] = {1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1}; // Intervalos: W-W-H-W-W-W-H
-    const int profile_minor[12] = {1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0}; // Natural Minor
+    // Encontra o melhor estado anterior (Vencedor leva tudo para estabilidade)
+    int best_prev_k = 0;
+    float max_prev = -1.0f;
+    for(int i=0; i<24; i++) {
+        if(key_accumulator[i] > max_prev) {
+            max_prev = key_accumulator[i];
+            best_prev_k = i;
+        }
+    }
 
+    // Calcula novo estado baseado em Bayes simplificado
+    for (int k = 0; k < 24; k++) {
+        float transition_prob = TRANSITION_MATRIX[best_prev_k][k];
+        next_probs[k] = emission[k] * (key_accumulator[k] * 0.9f + transition_prob * 0.1f);
+    }
+
+    key_accumulator = next_probs;
+
+    // 3. ENCONTRA O VENCEDOR
     float best_score = -1.0f;
-    out_key = -1;
-    out_mode = 0; // 0=Major, 1=Minor
-
-    // Testa as 12 tônicas possíveis para Escala Maior
-    for (int root = 0; root < 12; root++) {
-        float score = 0.0f;
-        for (int i = 0; i < 12; i++) {
-            // Rotaciona o perfil para a tônica atual
-            int interval = (i - root + 12) % 12;
-            if (profile_major[interval] == 1) {
-                score += key_accumulator[i];
-            } else {
-                // Penalidade para notas fora da escala
-                score -= key_accumulator[i] * 0.5f; 
-            }
-        }
-        if (score > best_score) {
-            best_score = score;
-            out_key = root;
-            out_mode = 0;
+    int winner_idx = 0;
+    for (int k = 0; k < 24; k++) {
+        if (key_accumulator[k] > best_score) {
+            best_score = key_accumulator[k];
+            winner_idx = k;
         }
     }
 
-    // Testa as 12 tônicas possíveis para Escala Menor
-    for (int root = 0; root < 12; root++) {
-        float score = 0.0f;
-        for (int i = 0; i < 12; i++) {
-            int interval = (i - root + 12) % 12;
-            if (profile_minor[interval] == 1) {
-                score += key_accumulator[i];
-            } else {
-                score -= key_accumulator[i] * 0.5f;
-            }
-        }
-        if (score > best_score) {
-            best_score = score;
-            out_key = root;
-            out_mode = 1;
-        }
-    }
+    out_key = winner_idx % 12;
+    out_mode = (winner_idx >= 12) ? 1 : 0;
 }
 
 AnalysisResult DSPEngine::process(uintptr_t input_buffer_ptr) {
     float* audio_buffer = reinterpret_cast<float*>(input_buffer_ptr);
     AnalysisResult res;
     
-    // ... (Pré-processamento igual) ...
     remove_dc_offset(audio_buffer, buffer_size);
     res.rms_amplitude = compute_rms(audio_buffer, buffer_size);
 
@@ -135,15 +166,17 @@ AnalysisResult DSPEngine::process(uintptr_t input_buffer_ptr) {
         res.frequency = 0; res.midi_note = 0; res.pitch_error = 0;
     }
     
-    // Stub Chroma e Stability
     res.chroma.resize(12, 0.0f);
     res.stability = 0.0f;
 
-    // NOVO: Atualiza a detecção de escala
     update_key_detector(res.midi_note, res.detected_key, res.detected_mode);
 
     return res;
 }
+
+// ==================================================
+// BINDINGS PARA WEB ASSEMBLY
+// ==================================================
 
 EMSCRIPTEN_BINDINGS(vox_engine) {
     register_vector<float>("FloatVector");
@@ -154,8 +187,8 @@ EMSCRIPTEN_BINDINGS(vox_engine) {
         .field("stability", &AnalysisResult::stability)
         .field("rms_amplitude", &AnalysisResult::rms_amplitude)
         .field("chroma", &AnalysisResult::chroma)
-        .field("detected_key", &AnalysisResult::detected_key)   // NOVO
-        .field("detected_mode", &AnalysisResult::detected_mode); // NOVO
+        .field("detected_key", &AnalysisResult::detected_key)
+        .field("detected_mode", &AnalysisResult::detected_mode);
 
     class_<DSPEngine>("DSPEngine")
         .constructor<int, int>()
