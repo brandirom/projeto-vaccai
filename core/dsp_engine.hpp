@@ -37,12 +37,24 @@ private:
     int sample_rate;
     int buffer_size;
     
-    // --- Filtro de Suavização ---
+    // --- NOVAS VARIÁVEIS PARA MELHORAR A ESTABILIDADE ---
+    
+    // 1. Filtro de Suavização (Low Pass Filter)
+    // Guarda a frequência do frame anterior para fazer uma média ponderada
+    float smoothed_frequency; 
+
+    // 2. Mecanismo de Hold (Preencher Buracos)
+    // Guarda a última nota válida para usar caso o som falhe por milissegundos
+    float last_valid_freq;    
+    int frames_since_valid;   
+
+    // ----------------------------------------------------
+
+    // --- Filtro de Mediana ---
     std::vector<float> median_buffer; 
     int median_idx;
 
     // --- Métrica de Estabilidade ---
-    // Histórico curto das notas detectadas para calcular desvio padrão
     std::vector<float> stability_buffer; 
     int stability_idx;
 

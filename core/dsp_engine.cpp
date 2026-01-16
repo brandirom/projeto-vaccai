@@ -12,6 +12,7 @@ using namespace emscripten;
 // MATRIZ DE TRANSIÇÃO (Lógica Musical / Círculo de Quintas)
 // ==================================================
 std::vector<std::vector<float>> build_transition_matrix() {
+    // 24 estados: 0-11 (Maior), 12-23 (Menor)
     std::vector<std::vector<float>> trans(24, std::vector<float>(24, 0.0f));
     
     for (int from = 0; from < 24; from++) {
@@ -21,17 +22,20 @@ std::vector<std::vector<float>> build_transition_matrix() {
             bool from_is_minor = (from >= 12);
             bool to_is_minor = (to >= 12);
 
+            // Calcula distância no Círculo de Quintas
             int diff = std::abs(to_note - from_note);
             int harmonic_dist = (diff * 7) % 12; 
             if (harmonic_dist < 0) harmonic_dist += 12;
             harmonic_dist = std::min(harmonic_dist, 12 - harmonic_dist);
 
-            float prob = 0.001f; 
+            float prob = 0.001f; // Probabilidade base
 
             if (from_is_minor == to_is_minor) {
-                if (harmonic_dist == 0) prob = 0.80f;      
-                else if (harmonic_dist == 1) prob = 0.08f; 
+                // Mesmo modo
+                if (harmonic_dist == 0) prob = 0.80f;      // Inércia
+                else if (harmonic_dist == 1) prob = 0.08f; // Dominante/Subdominante
             } else {
+                // Mudança de Modo (Relativas)
                 int semitone_diff = std::abs((from % 12) - (to % 12));
                 if (semitone_diff == 9 || semitone_diff == 3) prob = 0.10f; 
             }
@@ -48,16 +52,20 @@ static std::vector<std::vector<float>> TRANSITION_MATRIX = build_transition_matr
 // ==================================================
 
 DSPEngine::DSPEngine(int sr, int bs) : sample_rate(sr), buffer_size(bs) {
-    // Filtro de Mediana (Suavização rápida)
+    // Inicializa buffers de processamento
     median_buffer.resize(5, 0.0f);
     median_idx = 0;
     
-    // Buffer de Estabilidade (Analise de sustenção ~250ms)
     stability_buffer.resize(15, 0.0f);
     stability_idx = 0;
     
-    // Inicializa detector de escala
+    // Inicializa detector de escala com probabilidade uniforme
     key_accumulator.resize(24, 1.0f / 24.0f); 
+
+    // --- INICIALIZAÇÃO DAS NOVAS VARIÁVEIS (HOLD E LPF) ---
+    smoothed_frequency = 0.0f;
+    last_valid_freq = 0.0f;
+    frames_since_valid = 0;
 }
 
 DSPEngine::~DSPEngine() {}
@@ -75,10 +83,12 @@ float DSPEngine::compute_rms(const float* buffer, int size) {
     return std::sqrt(sum / size);
 }
 
+// Filtro Não-Linear (Mediana)
 float DSPEngine::apply_median_filter(float new_freq) {
     median_buffer[median_idx] = new_freq;
     median_idx = (median_idx + 1) % median_buffer.size();
     
+    // 'static' para evitar realocação a cada frame
     static std::vector<float> sort_buffer;
     
     if (sort_buffer.size() != median_buffer.size()) {
@@ -88,7 +98,8 @@ float DSPEngine::apply_median_filter(float new_freq) {
     }
     
     std::sort(sort_buffer.begin(), sort_buffer.end());
-    return sort_buffer[2]; 
+    
+    return sort_buffer[2]; // Retorna a mediana
 }
 
 // ==================================================
@@ -97,7 +108,6 @@ float DSPEngine::apply_median_filter(float new_freq) {
 void DSPEngine::update_key_detector(float midi_note, int& out_key, int& out_mode) {
     if (midi_note <= 0) return; 
 
-    // OTIMIZAÇÃO: 'static' evita recriar os vetores a cada chamada (performance)
     static const std::vector<int> major_intervals = {0, 2, 4, 5, 7, 9, 11};
     static const std::vector<int> minor_intervals = {0, 2, 3, 5, 7, 8, 10};
 
@@ -142,7 +152,6 @@ void DSPEngine::update_key_detector(float midi_note, int& out_key, int& out_mode
         next_probs[k] = emission[k] * (key_accumulator[k] * 0.9f + transition_prob * 0.1f);
     }
 
-    // Normalização Segura
     float sum_new = 0.0f;
     for (float p : next_probs) sum_new += p;
     
@@ -178,20 +187,67 @@ AnalysisResult DSPEngine::process(uintptr_t input_buffer_ptr) {
     remove_dc_offset(audio_buffer, buffer_size);
     res.rms_amplitude = compute_rms(audio_buffer, buffer_size);
 
-    // 2. Gate de Ruído
-    const float NOISE_THRESHOLD = 0.005f; 
+    // Ajuste de Threshold para pegar dinâmicas mais suaves
+    const float NOISE_THRESHOLD = 0.002f; 
     float raw_frequency = 0.0f;
 
     if (res.rms_amplitude > NOISE_THRESHOLD) {
         raw_frequency = PitchAlgo::find_fundamental(audio_buffer, buffer_size, sample_rate);
     }
 
-    // 3. Pós-processamento (Mediana)
-    float filtered_frequency = apply_median_filter(raw_frequency);
+    // ===========================================================
+    // NOVO: Mecanismo de HOLD (Preenche Buracos)
+    // ===========================================================
+    // Se o pitch caiu para zero (erro/consoante), mas faz pouco tempo que ouvimos algo válido,
+    // mantemos a nota anterior.
+    const int MAX_HOLD_FRAMES = 8; // ~130ms a 60fps (Ajustável)
+
+    if (raw_frequency > 50.0f) {
+        // Sinal válido detectado: atualiza memória e reseta contador
+        last_valid_freq = raw_frequency;
+        frames_since_valid = 0;
+    } else {
+        // Sinal inválido ou silêncio
+        if (frames_since_valid < MAX_HOLD_FRAMES && last_valid_freq > 50.0f) {
+            // Estamos no "tempo de carência", mantenha a nota!
+            raw_frequency = last_valid_freq;
+            frames_since_valid++;
+        } else {
+            // Tempo esgotou, é silêncio real ou pausa longa.
+            raw_frequency = 0.0f;
+            last_valid_freq = 0.0f; // Reseta para não "glissar" do nada na próxima nota
+        }
+    }
+
+    // 3. Filtro de Mediana (Tira erros grosseiros/pulos de oitava)
+    float median_freq = apply_median_filter(raw_frequency);
+
+    // ===========================================================
+    // NOVO: Filtro Passa-Baixa (LPF - Smoothing)
+    // ===========================================================
+    // Suaviza a transição entre frequências para remover o "serrilhado" (jitter).
+    // Alpha: 0.6f é um bom equilíbrio para voz pop.
+    const float alpha = 0.6f; 
+
+    if (median_freq > 0.0f) {
+        if (smoothed_frequency <= 0.0f) {
+            // Primeiro frame de som (Ataque): pule direto para o valor (sem inércia)
+            smoothed_frequency = median_freq;
+        } else {
+            // Frames subsequentes (Sustentação): aplique a suavização exponencial
+            smoothed_frequency = (smoothed_frequency * (1.0f - alpha)) + (median_freq * alpha);
+        }
+    } else {
+        // Release rápido no silêncio
+        smoothed_frequency = 0.0f;
+    }
+
+    // Usamos a frequência suavizada para o resto da lógica
+    float final_frequency = smoothed_frequency;
 
     // 4. Validação e Conversão
-    if (filtered_frequency > 55.0f && filtered_frequency < 1400.0f) {
-        res.frequency = filtered_frequency;
+    if (final_frequency > 55.0f && final_frequency < 1400.0f) {
+        res.frequency = final_frequency;
         res.midi_note = PitchAlgo::hz_to_midi(res.frequency);
         
         float note_nearest = std::round(res.midi_note);
@@ -202,29 +258,23 @@ AnalysisResult DSPEngine::process(uintptr_t input_buffer_ptr) {
     
     res.chroma.resize(12, 0.0f); 
 
-    // --- CÁLCULO DE ESTABILIDADE (NOVO) ---
-    // Calcula o desvio padrão das notas recentes para detectar "tremedeira" ou vibrato excessivo
+    // --- CÁLCULO DE ESTABILIDADE (Desvio Padrão) ---
     if (res.frequency > 0) {
         stability_buffer[stability_idx] = res.midi_note;
         stability_idx = (stability_idx + 1) % stability_buffer.size();
 
-        // Média
         float sum = 0.0f;
         for (float v : stability_buffer) sum += v;
         float mean = sum / stability_buffer.size();
 
-        // Variância
         float sq_sum = 0.0f;
         for (float v : stability_buffer) sq_sum += (v - mean) * (v - mean);
         float variance = sq_sum / stability_buffer.size();
         float stdev = std::sqrt(variance);
 
-        // Normalização: 
-        // Desvio 0.0 (super estável) -> stability 1.0
-        // Desvio >= 0.5 (instável) -> stability 0.0
         res.stability = 1.0f - std::min(stdev / 0.5f, 1.0f); 
     } else {
-        res.stability = 0.0f; // Silêncio não tem estabilidade
+        res.stability = 0.0f;
     }
 
     // 5. Detecção de Tonalidade (HMM)
