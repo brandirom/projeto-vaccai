@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Projeto Vaccai</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+    <header class="top-bar">
+        <div class="header-group logo-box">
+            <div class="logo">Projeto <span>Vaccai</span></div>
+        </div>
+
+        <div class="header-group mic-box">
+            <div class="mic-wrapper">
+                <button id="btnMicMenu" class="btn-icon-transparent" title="Selecionar Microfone">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="23"></line>
+                    </svg>
+                </button>
+                <div id="micList" class="mic-dropdown">
+                    <div class="mic-option">Clique em CONFIG para buscar...</div>
+                </div>
+                <select id="audioSource" style="display: none;"></select>
+            </div>
+        </div>
+
+        <div class="header-group file-box">
+            <div class="corner-help" data-tooltip="Atenção: Use fones de ouvido obrigatoriamente. Se o som sair pelos alto-falantes, o microfone irá recapturar o áudio da música, causando eco e impedindo o processamento correto da sua gravação.
+
+Sobre o sincronismo: Sua voz pode apresentar um pequeno atraso em relação à música. Isso é normal e esperado: nosso cérebro aguarda o estímulo da voz original para reagir, e esse tempo de resposta, somado ao caminho que o som percorre até o fone, gera esse leve descompasso.">?</div>
+            
+            <label class="file-btn-simple" title="Carregar arquivo de áudio">
+                <span class="folder-icon">📂</span> 
+                <span id="fileNameDisplay" class="file-name-text">Carregar Música...</span>
+                <input type="file" id="backingInput" accept="audio/*" style="display: none;">
+            </label>
+
+            <button id="btnRemoveBacking" class="btn-icon-transparent" style="display: none; width: 24px; height: 24px; margin-left: 5px; color: var(--danger);" title="Remover música">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+            </button>
+            
+            <div class="input-divider"></div>
+
+            <div class="mini-input-wrapper">
+                <span>Começar em:</span>
+                <input type="number" id="backingStart" value="0" min="0">
+                <span style="font-size: 0.6rem; opacity: 0.5">seg</span>
+            </div>
+
+            <div class="input-divider"></div>
+            
+            <div class="mini-input-wrapper">
+                <span>Vol:</span>
+                <input type="range" id="backingVolume" min="0" max="1" step="0.1" value="0.5" class="mini-slider">
+            </div>
+        </div>
+
+        <div style="flex:1"></div> 
+
+        <div class="header-group key-box">
+            <div class="corner-help" data-tooltip="Definição de Tonalidade:
+Auto: O sistema estima o tom com base no áudio processado até o momento.
+Manual: Mantém o tom fixo na escolha definida por você.
+
+Visualização:
+As faixas verdes indicam as notas que pertencem à escala e a linha roxa marca a tônica (nota principal).
+
+Dica: Caso não saiba o tom da música que carregou, uma busca rápida na internet resolve.">?</div>
+            <span class="box-label">TOM</span>
+            <div class="key-select-group">
+                <select id="keyRoot">
+                    <option value="-1">Auto</option>
+                    <option value="0">C</option><option value="1">C#</option><option value="2">D</option>
+                    <option value="3">Eb</option><option value="4">E</option><option value="5">F</option>
+                    <option value="6">F#</option><option value="7">G</option><option value="8">Ab</option>
+                    <option value="9">A</option><option value="10">Bb</option><option value="11">B</option>
+                </select>
+                <select id="keyMode">
+                    <option value="0">Maior</option>
+                    <option value="1">Menor</option>
+                </select>
+            </div>
+        </div>
+    </header>
+
+    <div class="workspace">
+        <aside class="sidebar-left">
+            <div class="lyrics-container">
+                <div class="lyrics-header">
+                    <div class="logo" style="font-size: 0.8rem;">LYRICS</div>
+                    <button id="btnToggleSearch">BUSCAR</button>
+                </div>
+                
+                <div class="lyrics-manual-controls">
+                    <label class="lyrics-sync-check">
+                        <input type="checkbox" id="chkLyricsSync" checked>
+                        <span>Sincronizar</span>
+                    </label>
+                    <div style="width:1px; height:16px; background:rgba(255,255,255,0.1)"></div>
+                    <span>Começar em:</span>
+                    <input type="number" id="lyricsStartTime" class="lyrics-input-time" value="0" min="0" disabled>
+                    <span style="font-size: 0.65rem; opacity: 0.5; margin-left: 2px;">seg</span>
+                    <div class="help-tip" data-tooltip="Com o botão Sincronizar marcado, as letras serão exibidas em sincronia com o arquivo de áudio carregado. Caso prefira o ajuste manual, desmarque a opção para que a letra comece a partir do tempo exato que você colocar aqui.">?</div>
+                </div>
+
+                <div id="lyrics-search-panel" class="lyrics-search-panel">
+                    <button id="btnCloseSearch" class="btn-close-search">← Voltar para Letra</button>
+                    <div class="search-inputs">
+                        <input type="text" id="searchTrackName" class="search-input" placeholder="Nome da Música">
+                        <input type="text" id="searchArtistName" class="search-input" placeholder="Artista">
+                        <button id="btnDoSearch" class="btn-search-action">BUSCAR</button>
+                    </div>
+                    <div id="searchResults" class="search-results-list">
+                        <div style="text-align:center; margin-top:20px; color:#555; font-size:0.8rem;">
+                            Digite o nome e artista e clique em pesquisar.
+                        </div>
+                    </div>
+                </div>
+
+                <div id="lyrics-scroll">
+                    <div style="margin-top: 50%; color: #444;">Carregue uma música ou busque a letra manualmente.</div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="center-stage">
+            <div class="canvas-wrapper">
+                <canvas id="pitchGraph"></canvas>
+
+                <div id="floatingTuner" class="hud-box hud-tuner">
+                    <button class="btn-minimize" title="Minimizar"></button>
+                    <div class="min-label" title="Abrir Afinador">🎯</div>
+                    
+                    <div class="hud-full-content">
+                        <div class="hud-info" data-tooltip="Este indicador mede o quão próximo sua voz está da frequência exata (em Hz) da nota detectada. No entanto, encare essa métrica apenas como um guia de apoio. Na prática musical, estar dentro do tom é mais importante do que cravar o ponteiro no centro.
+
+Variações naturais, como o vibrato e a interpretação emocional, podem afastar o gráfico do centro matemático sem que isso soe desafinado ao ouvido humano. Use o afinador para ajustar sua percepção, mas confie sempre na sua audição para o resultado final.">?</div>
+                        
+                        <div class="hud-note-group">
+                            <div class="hud-note" id="noteName">--</div>
+                            <span id="centsDisplay" class="hud-cents">--</span>
+                        </div>
+                        
+                        <canvas id="tunerCanvas" width="160" height="50"></canvas>
+                        
+                        <div class="hud-stats">
+                            <span id="freq">0.0</span> Hz <span style="opacity:0.3">|</span> Desvio: <span id="error">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="graphScrollbar" class="custom-scroll">
+                <div id="graphScrollGhost"></div>
+            </div>
+
+            <footer class="bottom-bar">
+                
+                <div class="record-ctrl">
+                    <button id="startBtn" class="rec-btn" title="Iniciar Gravação">
+                        <div class="rec-dot"></div> GRAVAR
+                    </button>
+                    <button id="stopBtn" class="rec-btn stop-btn" disabled title="Parar Gravação">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect width="14" height="14" rx="2" /></svg>
+                    </button>
+                </div>
+        
+                <div class="player-ctrl">
+                    <div class="player-info-row">
+                        <span id="currentTime">0:00</span>
+                        <button id="playPauseBtn" class="play-main-btn">
+                            <svg id="iconPlay" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" style="display:block; transform: translateX(1px);"><path d="M3 0.5L12.5 7L3 13.5V0.5Z" /></svg>
+                            <svg id="iconPause" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" style="display:none;"><rect x="1" y="1" width="4" height="12" rx="1"/><rect x="9" y="1" width="4" height="12" rx="1"/></svg>
+                        </button>
+                        <span id="totalTime">0:00</span>
+                    </div>
+                    <div class="progress-track" id="progressContainer">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                </div>
+        
+                <div class="sync-opt">
+                    <label class="icon-toggle" title="Ouvir música de fundo junto à sua voz gravada (no playback)">
+                        <input type="checkbox" id="playBackingToggle" checked>
+                        <div class="icon-box">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>
+                        </div>
+                    </label>
+                    <button id="btnDownload" class="icon-btn" disabled title="Baixar áudio da voz">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y="3"></line>
+                        </svg>
+                    </button>
+        
+                    <audio id="backingAudio" style="display:none;"></audio>
+                    <audio id="audioPlayer" style="display:none;"></audio>
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <div id="introModal" class="modal-overlay">
+        <div class="modal-box">
+            <h2 class="modal-title">Bem-vindo ao Projeto <span style="color:var(--primary)">Vaccai</span></h2>
+            
+            <div class="modal-content">
+                <h3>Antes de começar</h3>
+                
+                <p><strong>Isolamento da Voz:</strong> O algoritmo foi desenvolvido para processar exclusivamente o sinal da voz humana. Ruídos de fundo ou outros sons no ambiente podem interferir na análise, comprometendo a clareza do gráfico gerado.</p>
+                
+                <p><strong>Sensibilidade a Ruídos:</strong> É normal observar picos eventuais ou instabilidades na visualização. Frequentemente, isso é causado por interferências externas ou até mesmo pelos sons mecânicos naturais da articulação da boca e dos lábios.</p>
+                
+                <hr style="opacity: 0.2; margin: 15px 0;">
+                
+                <p style="font-size: 0.9em;">
+                    Para mais informações técnicas ou acesso ao código-fonte, visite o repositório oficial: 
+                    <a href="https://github.com/brandirom/projeto-vaccai" target="_blank" style="color: var(--primary); text-decoration: none;">Projeto Vaccai no GitHub</a>.
+                </p>
+            </div>
+
+            <button id="btnCloseModal" class="modal-btn">COMEÇAR</button>
+        </div>
+    </div>
+
+    <script src="js/vaccai_engine.js"></script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>

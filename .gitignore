@@ -1,0 +1,22 @@
+# Compilação temporária do Emscripten
+build/
+
+# Configurações de IDEs e Editores
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Python (Gerado pelo server.py)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Arquivos de Sistema Operacional
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db

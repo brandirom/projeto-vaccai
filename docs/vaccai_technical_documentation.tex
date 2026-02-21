@@ -1,0 +1,533 @@
+\documentclass[11pt, a4paper]{article}
+
+% --- Codificação e Idioma ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+
+% --- Fonte e Tipografia (Estilo Matemático) ---
+\usepackage{mathpazo} % Fonte Palatino (Texto e Matemática)
+\usepackage[scaled=0.95]{helvet} % Helvetica para Sans Serif
+\usepackage{courier} % Courier para código
+\usepackage{microtype} % Micro-tipografia refinada
+\linespread{1.05} % Espaçamento de linha Palatino
+
+% --- Pacotes Matemáticos ---
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{mathtools}
+
+% --- Estilo dos Títulos ---
+\usepackage{titlesec}
+\titleformat{\section}{\large\scshape\centering}{\thesection.}{1em}{}
+\titleformat{\subsection}{\bfseries}{\thesubsection}{1em}{}
+
+% --- Legendas e Floats ---
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage{float}
+
+% --- Algoritmos ---
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\floatname{algorithm}{Algoritmo}
+\renewcommand{\algorithmicrequire}{\textbf{Entrada:}}
+\renewcommand{\algorithmicensure}{\textbf{Saída:}}
+
+% --- Layout e Margens ---
+\usepackage{geometry}
+\geometry{
+ a4paper,
+ left=20mm,
+ right=20mm,
+ top=25mm,
+ bottom=25mm,
+}
+
+% --- Cabeçalhos e Rodapés ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{} 
+\fancyhead[CO]{\small \scshape Projeto Vaccai}
+\fancyhead[CE]{\small \scshape Documentação Técnica}
+\fancyhead[R]{\small \thepage} 
+\renewcommand{\headrulewidth}{0.5pt}
+
+% --- Configuração de Teoremas ---
+\theoremstyle{plain}
+\newtheorem{teorema}{Teorema}[section]
+\theoremstyle{definition}
+\newtheorem{definicao}{Definição}[section]
+
+% --- Links e Referências ---
+\usepackage{xcolor}
+\definecolor{azullink}{RGB}{0, 0, 100}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=azullink,
+    citecolor=azullink,
+    urlcolor=azullink,
+    pdftitle={Projeto Vaccai - Documentação},
+    pdfauthor={Rumenick Brandi Sigolo}
+}
+
+% --- Metadados do Título ---
+\title{\textbf{\LARGE Projeto Vaccai}\\[0.2cm] \large Documentação Técnica e Modelagem Matemática}
+\author{\textsc{Rumenick Brandi Sigolo}}
+
+\begin{document}
+
+\maketitle
+
+% Resumo
+\begin{center}
+\begin{minipage}{0.9 \textwidth}
+\begin{abstract}
+\noindent Este documento centraliza toda a parte matemática e os algoritmos utilizados no motor de processamento de áudio (DSP) do Projeto Vaccai. O foco principal é a análise de voz monofônica em tempo real.
+
+O texto passa por todo o processo atual: desde o tratamento inicial do sinal e a detecção de frequência fundamental com o algoritmo YIN. Além disso, aborda a quantização para MIDI e o uso de Modelos Ocultos de Markov (HMM) para identificar a tonalidade e o modo da música. Sempre que novas lógicas ou funcionalidades forem adicionadas ao projeto, este documento também será atualizado para refletir a nova modelagem.
+\end{abstract}
+\end{minipage}
+\end{center}
+
+\vspace{0.5cm}
+
+\section{Introdução}
+O Projeto Vaccai é um sistema de processamento de áudio em tempo real voltado para o treinamento vocal. O principal objetivo do motor de DSP (\textit{Digital Signal Processing}) é capturar a frequência fundamental ($f_0$) da voz com alta precisão e praticamente sem atraso (baixa latência), convertendo tudo para notas musicais para analisar a afinação e a tonalidade.
+
+Esta documentação funciona como a base teórica e matemática oficial do \textit{backend}. À medida que o código evoluir e novas soluções forem integradas, a modelagem por trás delas será continuamente adicionada aqui.
+
+\subsection{Justificativa da Abordagem no Domínio do Tempo}
+
+Para a detecção de $f_0$, a escolha foi usar algoritmos no domínio do tempo (autocorrelação via YIN) em vez das clássicas abordagens espectrais via FFT. O motivo disso é o \textit{trade-off} fundamental entre resolução espectral e temporal, limitado pelo princípio de Gabor-Heisenberg\footnote{O Princípio da Incerteza de Gabor estabelece que não dá para localizar um sinal com precisão perfeita no tempo e na frequência ao mesmo tempo. O produto das incertezas no tempo ($\Delta t$) e na frequência ($\Delta f$) tem um limite inferior: $\Delta t \cdot \Delta f \ge C$, onde a constante $C$ depende de como se define a largura de banda.}.
+
+Em métodos de transformada discreta, a resolução de frequência $\Delta f$ (a largura do \textit{bin}) é inversamente proporcional ao tamanho da janela de tempo $T_w$:
+
+\begin{equation}
+    \Delta f = \frac{f_s}{N} = \frac{1}{T_w}
+\end{equation}
+
+Onde $f_s$ é a taxa de amostragem e $N$ o número de amostras. No caso do canto, a precisão nas frequências graves é crítica. Por exemplo, a diferença entre as notas $A_2$ ($110$ Hz) e $A\#_2$ ($116.5$ Hz) exige uma separação de apenas $\approx 6.5$ Hz. Para conseguir resolver essa diferença direto na FFT, o tamanho mínimo da janela teria que ser:
+
+\begin{equation}
+    T_w \approx \frac{1}{6.5 \text{ Hz}} \approx 153 \text{ ms}
+\end{equation}
+
+Uma latência de $153$ ms, somada ao tempo de computação e ao \textit{buffer} de áudio, criaria um atraso perceptível. Isso inviabilizaria o \textit{feedback} visual instantâneo, que é o objetivo do Projeto Vaccai.
+
+Por outro lado, métodos no domínio do tempo funcionam medindo a periodicidade do sinal (atraso $\tau$). Isso permite atingir uma precisão de frações de Hertz usando janelas bem menores (geralmente 2 a 3 períodos da fundamental), o que garante a resposta rápida do sistema.
+
+\section{Modelo de Sinal e Pré-Processamento}
+
+Para manter a baixa latência justificada na seção anterior, o sistema trabalha diretamente no fluxo de áudio bruto. A ideia é evitar o uso de janelas de acumulação muito extensas, o que criaria um atraso perceptível. Contudo, a eficiência dos algoritmos no domínio do tempo depende muito da qualidade do sinal de entrada.
+
+Considerando $x[n]$ o sinal de áudio discreto com taxa de amostragem $f_s$ (amostras por segundo), onde $n$ é o índice da amostra no tempo, o processamento ocorre em janelas (\textit{buffers}) de tamanho fixo $N$. Esse tamanho é dimensionado justamente para garantir a resposta em tempo real.
+
+Na análise vocal, o sinal $x[n]$ não é contínuo; ele é intercalado por pausas de silêncio e ruídos não-vocais (como respiração, som ambiente ou consoantes fricativas). O pré-processamento tem o papel crítico de ``limpar'' esse sinal e decidir, de forma determinística, quando o algoritmo de detecção de \textit{pitch} deve atuar. Isso evita o processamento de ruídos que gerariam resultados musicais espúrios (notas erradas). A lógica completa desse condicionamento e decisão de fluxo está detalhada no \textbf{Algoritmo \ref{alg:preprocess}}, no Apêndice A.
+
+\subsection{Remoção de Componente Contínua (DC Offset)}
+Sinais de voz capturados por microfones comuns costumam ter um deslocamento de tensão vertical, conhecido como \textit{DC Bias}. Isso acontece por conta de pequenas imperfeições no hardware de conversão analógico-digital, fazendo com que a onda não oscile exatamente em torno do zero.
+
+Esse deslocamento atrapalha a análise de periodicidade, já que altera os valores no cálculo dos produtos $x[n] \cdot x[n+\tau]$. A solução para corrigir isso é centralizar o sinal subtraindo a sua média:
+
+\begin{equation}
+    \mu_x = \frac{1}{N} \sum_{n=0}^{N-1} x[n]
+\end{equation}
+
+\begin{equation}
+    x'[n] = x[n] - \mu_x
+\end{equation}
+
+Essa operação traz a simetria da onda de volta, o que é fundamental para conseguir extrair o \textit{pitch} com precisão.
+
+\subsection{Discriminação Híbrida de Voz e Silêncio (Histerese Dupla)}
+
+A detecção de atividade vocal combina a energia do sinal (RMS) com a pureza harmônica para decidir de forma assertiva sobre a presença de voz. Para medir a energia, calcula-se a amplitude \textit{Root Mean Square} para cada janela:
+
+\begin{equation}
+    A_{rms}[t] = \sqrt{\frac{1}{N} \sum_{n=0}^{N-1} (x'[n])^2}
+\end{equation}
+
+Uma melhoria importante é a capacidade de diferenciar vogais de ruídos (como /s/ ou respiração) usando a Taxa de Cruzamento por Zero (ZCR):
+
+\begin{equation}
+    ZCR[t] = \frac{1}{N-1} \sum_{n=1}^{N-1} \mathbb{I}(x'[n] \cdot x'[n-1] < 0)
+\end{equation}
+
+Para decidir o estado de processamento $S_t \in \{0, 1\}$ (onde 1 é "Voz" e 0 é "Silêncio"), um comparador simples oscilaria rapidamente gerando \textit{chattering}. O sistema resolve isso implementando uma \textbf{histerese dupla}, que avalia simultaneamente amplitude e ZCR:
+
+\begin{equation}
+    S_t = \begin{cases} 
+    1 & \text{se } A_{rms}[t] > \eta_{open} \land ZCR[t] < \zeta_{open} \\
+    0 & \text{se } A_{rms}[t] < \eta_{close} \lor ZCR[t] > \zeta_{close} \\
+    S_{t-1} & \text{caso contrário}
+    \end{cases}
+\end{equation}
+
+Os parâmetros foram rigorosamente calibrados para garantir responsividade:
+\begin{itemize}
+    \item \textbf{Limiares de Abertura ($\eta_{open} = 0.003$, $\zeta_{open} = 0.20$):} O áudio deve ter volume suficiente e cruzar o zero poucas vezes (indicando um som vozeado limpo) para iniciar a análise.
+    \item \textbf{Limiares de Fechamento ($\eta_{close} = 0.001$, $\zeta_{close} = 0.30$):} Se o áudio cair abaixo do piso de ruído ou se tornar excessivamente sibilante (ZCR alto), o motor de processamento entra em pausa.
+\end{itemize}
+
+Essa "zona morta" funciona como uma inércia digital, garantindo que o \textit{feedback} visual tenha brechas limpas e não trema durante finais de frase orgânicos.
+
+\section{Detecção de Frequência Fundamental (Algoritmo YIN)}
+
+Quando o pré-processamento confirma que existe atividade vocal estável ($S_t = 1$), o sistema avança para a extração da frequência fundamental $f_0$. Para essa tarefa, utiliza-se o \textbf{Algoritmo YIN} \cite{yin2002}, escolhido por ser significativamente mais robusto que métodos simples de contagem de cruzamentos por zero ou correlação padrão. A estrutura completa dessa implementação encontra-se no \textbf{Algoritmo \ref{alg:pitch}}, no Apêndice A.
+
+\subsection{Função de Diferença e Normalização Cumulativa}
+O núcleo matemático do YIN opera de forma inversa à correlação: em vez de buscar a máxima semelhança, ele busca minimizar a diferença entre o sinal condicionado $x'[n]$ e suas versões atrasadas. A função de diferença quadrática é definida como:
+
+\begin{equation}
+    d_t(\tau) = \sum_{j=1}^{W} (x'[j] - x'[j+\tau])^2
+\end{equation}
+
+Para evitar o erro de "atraso zero" e impedir que o algoritmo escolha harmônicos superiores por engano, aplica-se a Normalização pela Média Cumulativa (CMNDF). Essa operação cria a função $d'_t(\tau)$, que penaliza vales profundos em atrasos curtos caso eles não se sustentem na média, reduzindo drasticamente os erros de oitava:
+
+\begin{equation}
+    d'_t(\tau) = \begin{cases} 
+    1 & \text{se } \tau = 0 \\ 
+    d_t(\tau) \cdot \left[ \frac{1}{\tau} \sum_{j=1}^{\tau} d_t(j) \right]^{-1} & \text{se } \tau > 0 
+    \end{cases}
+\end{equation}
+
+\subsection{Seleção de Limiar (Busca Híbrida)}
+
+A literatura original sugere um limiar absoluto e rigoroso em torno de 0.10 para evitar erros de oitava definitivamente. No entanto, para fins práticos e pedagógicos, o motor DSP do Projeto Vaccai implementa uma estratégia de \textbf{busca híbrida}. 
+
+Primeiro, o algoritmo procura o primeiro vale que cruze um limite de tolerância estrito de $\theta = 0.15$. Se a voz do estudante iniciante for muito "soprosa" (com muito ar vazando), a aperiodicidade será alta e esse limiar rigoroso pode não ser alcançado. Neste caso específico, o algoritmo realiza um \textit{fallback} para o mínimo global encontrado na janela de atrasos. 
+
+O valor detectado só é totalmente rejeitado se o índice de clareza do sinal for inferior a $0.60$ (o equivalente a uma taxa de aperiodicidade de $0.40$). Isso assegura precisão de estúdio quando o som é limpo, sem punir ou ignorar a voz em desenvolvimento de um estudante que ainda carece de técnica vocal perfeita.
+
+\subsection{Refinamento Parabólico}
+A detecção discreta fica limitada a valores inteiros de amostras. Para frequências agudas, como um Dó Soprano ($C6 \approx 1047$ Hz), um erro de arredondamento de apenas $0.5$ amostra já causaria um desvio de afinação próximo a \textbf{20 cents}. Isso é inaceitável para treino auditivo, já que o ouvido humano percebe diferenças menores que 5 cents\footnote{A sensibilidade auditiva à variação de altura em ouvintes treinados pode ser inferior a 5 cents (aprox. 0.3\% da frequência) nas regiões centrais da fala e canto (Moore, B. C. J., 2012).}.
+
+Para superar essa limitação física da taxa de amostragem sem precisar recorrer a um \textit{oversampling} custoso, aplica-se uma interpolação parabólica sobre o mínimo encontrado $\tau_{int}$. O período refinado $\tau_{fino}$ é calculado pelo vértice da parábola ajustada aos vizinhos do mínimo na função CMNDF:
+
+\begin{equation}
+    \tau_{fino} = \tau_{int} + \frac{d'[\tau_{int}-1] - d'[\tau_{int}+1]}{2(d'[\tau_{int}-1] - 2d'[\tau_{int}] + d'[\tau_{int}+1])}
+\end{equation}
+
+A frequência final é dada por $f_0 = f_s / \tau_{fino}$, garantindo precisão sub-cent sem adicionar latência.
+
+\subsection{Cadeia de Filtragem e Estabilização Temporal}
+
+A frequência bruta $\hat{f}_{raw}[n]$ obtida pelo YIN pode sofrer com dois tipos de instabilidade: erros impulsivos (saltos bruscos de oitava) e pequenas flutuações rápidas (\textit{jitter}). Para limpar isso sem comprometer a resposta em tempo real, o sistema usa uma cadeia de dois filtros: um não-linear seguido de um linear.
+
+\subsubsection{Estágio 1: Filtragem de Mediana (Rank-Order Filter)}
+Para eliminar erros grosseiros (\textit{outliers}) mantendo as transições reais entre as notas, o sinal passa primeiro por um filtro de mediana com janela $L=5$. Considerando o vetor de amostras recentes $W_n = [\hat{f}_{raw}[n], \dots, \hat{f}_{raw}[n-4]]$, a saída é:
+
+\begin{equation}
+    f_{med}[n] = \text{Mediana}(W_n)
+\end{equation}
+
+A escolha de uma janela ímpar de tamanho 5 permite ignorar até dois \textit{frames} errados consecutivos, introduzindo uma latência mínima de $(L-1)/2 = 2$ amostras, o que é essencial para a responsividade.
+
+\subsubsection{Estágio 2: Suavização Exponencial (IIR)}
+Em seguida, o sinal $f_{med}[n]$ passa por um filtro IIR de primeira ordem, que atua como um integrador com perdas. A equação é:
+
+\begin{equation}
+    f_{final}[n] = \alpha \cdot f_{med}[n] + (1 - \alpha) \cdot f_{final}[n-1]
+\end{equation}
+
+O valor de $\alpha$ foi definido em $0.50$. Esse é o ponto de equilíbrio: ele garante que a visualização da nota tenha firmeza e não fique tremendo na tela, mas sem deixar o sistema lento. Assim, ainda é possível capturar variações rápidas da voz.
+
+\section{Mapeamento Musical (Conversão MIDI)}
+
+Depois de obter a frequência fundamental $\hat{f}_0$ (em Hertz) pelo algoritmo YIN, o sistema converte esse valor para o espaço MIDI. Essa transformação é necessária para linearizar a percepção de altura. Na prática, isso garante que intervalos musicais iguais correspondam a distâncias numéricas constantes, não importa se a nota está numa oitava grave ou aguda.
+
+\subsection{Modelagem Matemática}
+O sistema usa como base o padrão internacional ISO 16:1975 \cite{iso16}, fixando o Lá central ($A_4$) em $\lambda = 440$ Hz. Isso garante compatibilidade com instrumentos ocidentais e serve de âncora para o índice MIDI $\mu = 69$. A função de mapeamento $\mathcal{M}: \mathbb{R}^+ \to \mathbb{R}$ é definida pela equação logarítmica:
+
+\begin{equation}
+    m = 69 + 12 \cdot \log_2 \left( \frac{\hat{f}_0}{440} \right)
+\end{equation}
+
+O resultado $m$ é um número real que guarda, ao mesmo tempo, a altura da nota e a precisão da afinação. Para saber qual é a nota musical exata $n$ na escala temperada, basta arredondar para o inteiro mais próximo:
+
+\begin{equation}
+    n = \lfloor m \rceil
+\end{equation}
+
+\subsection{Quantificação do Erro de Afinação (Biofeedback)}
+A parte decimal que sobra define o desvio de afinação, chamado de $\delta = m - n$. No treino vocal, visualizar esse desvio é fundamental, já que a voz humana é um instrumento de altura contínua (não tem teclas fixas como um piano).
+
+O sistema normaliza esse valor para a unidade de \textit{cents} (centésimos de semitom) usando a relação:
+\begin{equation}
+    c = 100 \cdot (m - n)
+\end{equation}
+O resultado $c$ fica no intervalo $[-50, +50]$. Esse dado alimenta a interface em tempo real, mostrando se o estudante está desafinando para baixo (bemol) ou para cima (sustenido). Assim, ele consegue corrigir a emissão vocal para chegar no centro tonal $n$, treinando o ouvido e o controle vocal.
+
+\section{Análise de Estabilidade Vocal}
+
+A seção anterior mostrou como obter a nota MIDI instantânea $m[t]$. Só que ter uma boa técnica vocal não é apenas acertar a afinação por um instante; é ter a capacidade de sustentar a emissão com consistência, evitando oscilações involuntárias (\textit{jitter} de altura) ou instabilidade por falta de apoio respiratório.
+
+Para medir isso em tempo real, implementou-se uma métrica de estabilidade baseada na dispersão estatística de curto prazo.
+
+\subsection{Modelagem Estatística (Janela Deslizante)}
+O sistema mantém um \textit{buffer} circular com as últimas $K$ amostras de notas MIDI detectadas. O tamanho da janela foi definido em \textbf{$K=15$} quadros. Esse valor foi escolhido para oferecer um equilíbrio entre suavizar micro-flutuações irrelevantes e manter a reatividade para detectar tremolos reais.
+
+Seja $\mathcal{M} = \{m_1, m_2, \dots, m_K\}$ o conjunto de valores na janela atual. O sistema calcula a média aritmética $\mu$ e a variância $\sigma^2$:
+
+\begin{equation}
+    \mu = \frac{1}{K} \sum_{i=1}^{K} m_i, \quad \sigma^2 = \frac{1}{K} \sum_{i=1}^{K} (m_i - \mu)^2
+\end{equation}
+
+O desvio padrão da amostra recente é dado por $\sigma = \sqrt{\sigma^2}$.
+
+\subsection{Métrica de Pontuação Normalizada}
+A pontuação de estabilidade $S \in [0, 1]$ é calculada normalizando o desvio padrão em relação a um limite de tolerância $\sigma_{lim}$.
+
+No código, fixou-se $\sigma_{lim} = 0.5$ semitons. Esse valor representa o limite entre um vibrato artístico controlado e uma instabilidade indesejada. A função de pontuação final é:
+
+\begin{equation}
+    S = 1.0 - \min\left( \frac{\sigma}{\sigma_{lim}}, 1.0 \right)
+\end{equation}
+
+Dessa forma, uma emissão perfeitamente reta ("lisa") resulta em $S \approx 1.0$, enquanto oscilações que passam de meio semitom de amplitude derrubam a pontuação em direção a $0.0$. Isso fornece um \textit{biofeedback} visual imediato sobre o controle de ar e a tensão laríngea do estudante.
+
+\section{Inferência de Tonalidade (Key Detection)}
+
+Na seção anterior, o sistema obteve uma sequência de notas ao longo do tempo. Só que, na música ocidental, o significado de uma nota depende do contexto harmônico (a Tonalidade). Diferente da análise polifônica, onde os acordes deixam o tom óbvio, o Projeto Vaccai trabalha com sinal monofônico (apenas a melodia). Isso exige que o sistema descubra o contexto global a partir de uma linha melódica que, muitas vezes, contém erros de execução.
+
+Para resolver essa ambiguidade das notas isoladas, utiliza-se um Modelo Oculto de Markov (HMM). A abordagem adapta o método de Müller \cite{muller_chap5} para priorizar a memória temporal e a estabilidade. A implementação detalhada está no \textbf{Algoritmo \ref{alg:key_detection}} (Apêndice A).
+
+\subsection{Espaço de Estados e Observação}
+
+O espaço de estados $S$ é formado pelas 24 tonalidades (12 maiores e 12 menores). Seja $q_t \in S$ a tonalidade oculta no instante $t$.
+A variável observável $o_t$ não é a frequência absoluta, mas sim a \textbf{classe de altura} (ou \textit{chroma}), derivada da nota MIDI $m$ calculada na Seção 4:
+
+\begin{equation}
+    o_t = (m \mod 12) \in [0, 12)
+\end{equation}
+
+Essa operação de módulo torna o sistema "cego" à oitava. Ou seja, ele entende que um Dó central e um Dó agudo são a mesma classe de nota, permitindo detectar a tonalidade independente da voz ser grave (Baixo) ou aguda (Soprano).
+
+\subsection{Probabilidade de Emissão (Modelo Fuzzy)}
+
+A probabilidade de emissão $P(o_t | q_t = k)$ calcula a chance de se observar o chroma $o_t$ dado que a tonalidade atual é $k$. Para lidar com a afinação da voz humana (que tem vibratos e micro-desvios), o sistema não usa uma lógica binária ("pertence ou não pertence à escala"). Em vez disso, usa uma abordagem \textit{Fuzzy} Gaussiana.
+
+Seja $d(o_t, S_k)$ a menor distância circular no relógio cromático entre a nota observada $o_t$ e as notas da escala $S_k$. A função é:
+
+\begin{equation}
+    E(o_t | k) = e^{-\frac{d(o_t, S_k)^2}{2\sigma^2}} + \epsilon
+\end{equation}
+
+\textbf{Justificativa dos Parâmetros:}
+\begin{itemize}
+    \item \textbf{$\epsilon = 0.01$:} Um valor mínimo de probabilidade para evitar erros numéricos (divisão por zero) em notas fora da escala.
+    \item \textbf{$\sigma = 0.40$:} Esse valor define a tolerância. Foi estabelecido que uma nota com erro de afinação de $\pm 0.4$ semitons ainda conta com $\approx 60\%$ de relevância para a tonalidade correta. Isso permite que o sistema "perdoe" execuções imperfeitas, mantendo o contexto harmônico estável mesmo que o estudante desafine um pouco.
+\end{itemize}
+
+\subsection{Dinâmica de Transição e Inércia Tonal}
+
+A matriz de transição $A$ define a probabilidade da música mudar de tom. Como modulações bruscas são raras em exercícios vocais, a matriz foi construída para favorecer a continuidade (auto-transição), criando uma espécie de "inércia".
+
+As chances de transição para outros tons $A_{i,j}$ são baseadas na distância harmônica no \textbf{Círculo de Quintas}\footnote{O Círculo de Quintas organiza as 12 tonalidades. Nele, tonalidades vizinhas estão a um intervalo de quinta justa (7 semitons) e compartilham quase as mesmas notas.}. Isso permite modulações suaves (ex: Dó Maior $\to$ Sol Maior), mas penaliza saltos distantes e estranhos (ex: Dó Maior $\to$ F\# Maior).
+
+\subsection{Atualização Causal Otimizada}
+
+Em sistemas tradicionais de análise musical \textbf{offline}, algoritmos como o de Viterbi são frequentemente usados, pois analisam todo o áudio futuro para deduzir as escolhas corretas do passado. O motor DSP do Vaccai é estritamente de tempo real (causal), o que inviabiliza olhar para quadros futuros.
+
+Para compensar isso e manter a estabilidade, o algoritmo considera a transição a partir da tonalidade mais provável do instante anterior ($k_{best}$) com um peso de inércia altíssimo. Seja $\mathbf{P}_t$ o vetor de probabilidades para as 24 tonalidades:
+
+\begin{equation}
+    \mathbf{P}_t[k] \propto E(o_t | k) \cdot \left( \alpha \cdot \mathbf{P}_{t-1}[k] + (1 - \alpha) \cdot A_{k_{best}, k} \right)
+\end{equation}
+
+Onde $\alpha = 0.9$ é o fator de inércia. Essa imposição causal (90\% de memória sobre 10\% de transição) reduz o custo de processamento a zero atraso perceptível e evita modulações errôneas originadas por notas isoladas fora do tom.
+
+\section{Conclusão e Trabalhos Futuros}
+
+A base matemática e os algoritmos apresentados aqui formam o coração do motor de processamento de sinais do Projeto Vaccai. A arquitetura foi pensada com um foco principal: garantir que a interação seja realmente em tempo real. Ao escolher algoritmos no domínio do tempo (YIN) e otimizar o fluxo de processamento, foi possível criar um sistema que dá \textit{feedback} visual instantâneo. Ele mostra a afinação com uma latência que ninguém percebe, rodando bem até em dispositivos com recursos limitados.
+
+Este documento define a "camada de performance": as rotinas que precisam rodar obrigatoriamente ao mesmo tempo que a pessoa está cantando.
+
+\subsection{Trabalhos Futuros e Viabilidade de Expansão}
+O cenário atual de tecnologia para áudio e inteligência artificial trouxe muitas ferramentas novas que podem ser extremamente úteis no aprendizado de canto. Como o Projeto Vaccai é uma iniciativa \textit{open source}, nascida de uma demanda pessoal por métricas claras de estudo, a ideia é integrar essas inovações gradualmente, tanto pelo desafio técnico quanto para oferecer mais recursos para a comunidade.
+
+Algumas das possibilidades que estão no radar incluem:
+
+\begin{itemize}
+    \item \textbf{Avaliação de Pronúncia:} Usar reconhecimento de fala (ASR) para checar se o aluno está articulando a letra da música corretamente, e não apenas acertando a melodia.
+    \item \textbf{Separação de Áudio (Stems):} Implementar redes neurais para remover a voz original de músicas comerciais, permitindo que o aluno pratique com instrumentais reais ("Karaokê Inteligente").
+    \item \textbf{Correção via IA Generativa:} Utilizar modelos mais modernos para corrigir a afinação mantendo a naturalidade da voz, superando os métodos antigos que deixavam o som robotizado.
+\end{itemize}
+
+O grande desafio dessa expansão é puramente computacional. Rodar modelos de Deep Learning modernos exige hardware robusto (geralmente GPUs potentes). O obstáculo para as próximas versões será otimizar esses recursos pesados para que funcionem em computadores domésticos comuns, garantindo que o software continue acessível para quem não possui uma máquina de alto desempenho.
+
+\clearpage
+
+\appendix
+\section{Implementação Algorítmica}
+
+Abaixo apresentamos os algoritmos fundamentais que implementam o modelo matemático descrito. O Algoritmo \ref{alg:preprocess} detalha o condicionamento de sinal e a lógica de histerese. O Algoritmo \ref{alg:pitch} descreve a detecção de \textit{pitch} via YIN com pós-filtragem. Por fim, o Algoritmo \ref{alg:key_detection} descreve a inferência harmônica Fuzzy.
+
+\begin{algorithm}[H] 
+\caption{Pré-processamento: Noise Gate com Histerese e ZCR}
+\label{alg:preprocess}
+\begin{algorithmic}[1]
+\Require Buffer de áudio bruto $x$ de tamanho $N$, Estado anterior $S_{prev}$
+\Ensure Buffer centralizado $x'$, Novo Estado $S$
+
+\State $\mu \gets \frac{1}{N} \sum x[i]$ \Comment{Média DC}
+\State $E \gets 0, \quad \text{crossings} \gets 0$
+
+\For{$i \gets 0$ \textbf{to} $N-1$}
+    \State $x'[i] \gets x[i] - \mu$ \Comment{Remoção de Offset}
+    \State $E \gets E + (x'[i])^2$
+    \If{$i > 0$ \textbf{and} $\text{sgn}(x'[i]) \neq \text{sgn}(x'[i-1])$}
+        \State $\text{crossings} \gets \text{crossings} + 1$
+    \EndIf
+\EndFor
+
+\State $rms \gets \sqrt{E / N}$
+\State $zcr \gets \text{crossings} / (N-1)$
+
+\State \textbf{Lógica de Histerese Dupla (Schmitt Trigger)}
+\If{$rms > 0.003$ \textbf{and} $zcr < 0.20$}
+    \State $S \gets \textbf{True}$ \Comment{Abre o Gate (Voz Limpa Detectada)}
+\ElsIf{$rms < 0.001$ \textbf{or} $zcr > 0.30$}
+    \State $S \gets \textbf{False}$ \Comment{Fecha o Gate (Silêncio ou Ruído de Sopro)}
+\Else
+    \State $S \gets S_{prev}$ \Comment{Mantém estado na Zona Morta}
+\EndIf
+
+\If{$S$ \textbf{is} \textbf{True}}
+    \State \Return \textbf{True}, $x'$ 
+\Else
+    \State \Return \textbf{False}, $\emptyset$ 
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Estimativa de $f_0$ via Algoritmo YIN com Filtragem Híbrida}
+\label{alg:pitch}
+\begin{algorithmic}[1]
+\Require Sinal $x'$, Taxa $f_s$, Histórico $f_{prev}$
+\Ensure Frequência Estabilizada $f_{final}$
+
+\State $\tau_{min} \gets f_s / 1000, \quad \tau_{max} \gets f_s / 50$
+\State Inicializar vetor de diferença $d[\tau]$ e CMNDF $d'[\tau]$
+
+\State \textbf{Passo 1: Diferença Quadrática e CMNDF}
+\State $d'[0] \gets 1, \quad \text{running\_sum} \gets 0$
+\For{$\tau \gets 1$ \textbf{to} $\tau_{max}$}
+    \State $d[\tau] \gets \sum (x'[i] - x'[i+\tau])^2$
+    \State $\text{running\_sum} \gets \text{running\_sum} + d[\tau]$
+    \State $d'[\tau] \gets d[\tau] \cdot (\tau / \text{running\_sum})$
+\EndFor
+
+\State \textbf{Passo 2: Busca Híbrida por Vale (Limiar + Fallback)}
+\State $\hat{\tau} \gets -1, \quad \text{min\_val} \gets \infty$
+\For{$\tau \in [\tau_{min}, \tau_{max}]$}
+    \If{$d'[\tau] < 0.15$} \Comment{Limiar Rigoroso}
+        \While{$d'[\tau+1] < d'[\tau]$} \Comment{Busca mínimo local}
+            \State $\tau \gets \tau + 1$
+        \EndWhile
+        \State $\hat{\tau} \gets \tau$
+        \State $\text{min\_val} \gets d'[\hat{\tau}]$
+        \State \textbf{Break}
+    \EndIf
+    \If{$d'[\tau] < \text{min\_val}$}
+        \State $\text{min\_val} \gets d'[\tau]$ \Comment{Grava para o Fallback}
+        \State $\text{global\_min\_tau} \gets \tau$
+    \EndIf
+\EndFor
+
+\If{$\hat{\tau} == -1$}
+    \State $\hat{\tau} \gets \text{global\_min\_tau}$ \Comment{Aplica Fallback se não bater 0.15}
+\EndIf
+
+\State \textbf{Passo 3: Validação por Claridade}
+\State $clarity \gets 1.0 - \text{min\_val}$
+\If{$clarity < 0.60$} \Comment{Corte de pureza final (0.40 aperiodicidade)}
+    \State \Return $0$
+\EndIf
+
+\State $f_{raw} \gets f_s / \text{ParabolicInterpolation}(\hat{\tau})$
+
+\State \textbf{Passo 4: Filtragem Híbrida (Mediana + IIR)}
+\State $f_{med} \gets \text{MedianFilter}(f_{raw}, \text{buffer\_size}=5)$
+\State $f_{final} \gets 0.5 \cdot f_{med} + 0.5 \cdot f_{prev}$ \Comment{Suavização IIR}
+
+\State \Return $f_{final}$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Detecção de Tonalidade Causal (HMM Gaussiano Fuzzy)}
+\label{alg:key_detection}
+\begin{algorithmic}[1]
+\Require Nota MIDI $n$, Vetor de Probabilidades $\mathbf{P}_{prev}$
+\Ensure Tonalidade Vencedora $K_{win}$
+
+\State $c \gets n \pmod{12}$ \Comment{Nota cromática contínua}
+\State $\mathbf{P}_{new} \gets \text{zeros}(24)$
+\State $k_{best\_prev} \gets \text{argmax}(\mathbf{P}_{prev})$
+\State $\sigma \gets 0.40$ \Comment{Parâmetro de tolerância}
+
+\For{$k \gets 0$ \textbf{to} $23$}
+    \State \textbf{Passo 1: Emissão Gaussiana}
+    \State $d_{min} \gets \infty$
+    \For{$degree \in \text{ScaleDegrees}[k]$}
+        \State $d \gets \text{CircularDistance}(c, degree)$
+        \State $d_{min} \gets \min(d_{min}, d)$
+    \EndFor
+    \State $E \gets e^{-(d_{min}^2 / 2\sigma^2)} + 0.01$
+
+    \State \textbf{Passo 2: Transição e Inércia Causal}
+    \State $T \gets \text{TransitionMatrix}[k_{best\_prev}][k]$
+    \State $\mathbf{P}_{new}[k] \gets E \cdot (0.9 \cdot \mathbf{P}_{prev}[k] + 0.1 \cdot T)$
+\EndFor
+
+\State \textbf{Passo 3: Normalização}
+\State $S \gets \sum \mathbf{P}_{new}$
+\If{$S > 0$}
+    \State $\mathbf{P}_{prev} \gets \mathbf{P}_{new} / S$ \Comment{Atualiza e normaliza}
+\Else
+    \State $\mathbf{P}_{prev} \gets \text{Uniform}(24)$ \Comment{Fallback}
+\EndIf
+
+\State $K_{win} \gets \text{argmax}(\mathbf{P}_{prev})$
+
+\State \Return $K_{win}$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{thebibliography}{9}
+
+% Seção 3: YIN
+\bibitem{yin2002}
+De Cheveigné, Alain; Kawahara, Hideki.
+``YIN, a fundamental frequency estimator for speech and music''.
+\textit{The Journal of the Acoustical Society of America}, vol. 111, no. 4, pp. 1917-1930.
+2002.
+
+% Seção 3: Nota de Rodapé (JND)
+\bibitem{moore_hearing}
+Moore, Brian C. J.
+\textit{An Introduction to the Psychology of Hearing}.
+6th Edition. Emerald Group Publishing Limited, 2012.
+
+% Seção 5: ISO MIDI
+\bibitem{iso16}
+International Organization for Standardization.
+\textit{ISO 16:1975 Acoustics — Standard tuning frequency (Standard musical pitch)}.
+1975.
+
+% Seção 6: HMM
+\bibitem{muller_chap5}
+Müller, Meinard.
+\textit{Fundamentals of Music Processing: Audio, Analysis, Algorithms, Applications}.
+Capítulo 5: Harmony Analysis.
+Springer, 2015.
+ISBN 978-3-319-21944-8.
+
+\end{thebibliography}
+
+\end{document}
