@@ -340,24 +340,6 @@ Para compensar isso e manter a estabilidade, o algoritmo considera a transição
 
 Onde $\alpha = 0.9$ é o fator de inércia. Essa imposição causal (90\% de memória sobre 10\% de transição) reduz o custo de processamento a zero atraso perceptível e evita modulações errôneas originadas por notas isoladas fora do tom.
 
-\section{Conclusão e Trabalhos Futuros}
-
-A base matemática e os algoritmos apresentados aqui formam o coração do motor de processamento de sinais do Projeto Vaccai. A arquitetura foi pensada com um foco principal: garantir que a interação seja realmente em tempo real. Ao escolher algoritmos no domínio do tempo (YIN) e otimizar o fluxo de processamento, foi possível criar um sistema que dá \textit{feedback} visual instantâneo. Ele mostra a afinação com uma latência que ninguém percebe, rodando bem até em dispositivos com recursos limitados.
-
-Este documento define a "camada de performance": as rotinas que precisam rodar obrigatoriamente ao mesmo tempo que a pessoa está cantando.
-
-\subsection{Trabalhos Futuros e Viabilidade de Expansão}
-O cenário atual de tecnologia para áudio e inteligência artificial trouxe muitas ferramentas novas que podem ser extremamente úteis no aprendizado de canto. Como o Projeto Vaccai é uma iniciativa \textit{open source}, nascida de uma demanda pessoal por métricas claras de estudo, a ideia é integrar essas inovações gradualmente, tanto pelo desafio técnico quanto para oferecer mais recursos para a comunidade.
-
-Algumas das possibilidades que estão no radar incluem:
-
-\begin{itemize}
-    \item \textbf{Avaliação de Pronúncia:} Usar reconhecimento de fala (ASR) para checar se o aluno está articulando a letra da música corretamente, e não apenas acertando a melodia.
-    \item \textbf{Separação de Áudio (Stems):} Implementar redes neurais para remover a voz original de músicas comerciais, permitindo que o aluno pratique com instrumentais reais ("Karaokê Inteligente").
-    \item \textbf{Correção via IA Generativa:} Utilizar modelos mais modernos para corrigir a afinação mantendo a naturalidade da voz, superando os métodos antigos que deixavam o som robotizado.
-\end{itemize}
-
-O grande desafio dessa expansão é puramente computacional. Rodar modelos de Deep Learning modernos exige hardware robusto (geralmente GPUs potentes). O obstáculo para as próximas versões será otimizar esses recursos pesados para que funcionem em computadores domésticos comuns, garantindo que o software continue acessível para quem não possui uma máquina de alto desempenho.
 
 \clearpage
 
